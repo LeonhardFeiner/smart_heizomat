@@ -1,0 +1,10 @@
+{
+  "name": "capture-and-ocr",
+  "version": "1.0.0",
+  "description": "Screenshot using Puppeteer and OCR using Tesseract on Raspberry Pi",
+  "main": "screenshot.js",
+  "dependencies": {
+    "puppeteer": "^21.3.2",
+    "express": "^4.18.2"
+  }
+}

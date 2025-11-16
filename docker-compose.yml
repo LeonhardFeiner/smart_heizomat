@@ -1,0 +1,19 @@
+services:
+  novnc:
+    build: ./novnc_arm_dotcurser
+    container_name: novnc
+    network_mode: "host"
+    # network_mode: "bridge"
+    environment:
+      - VNC_SERVER=192.168.0.8
+    ports:
+      - "6080:6080"  # Host port 6080 to container port 80 for noVNC
+      # - "127.0.0.1:6080:6080"  # Host port 6080 to container port 80 for noVNC
+    restart: unless-stopped
+
+  capture-and-ocr:
+    build: ./capture-and-ocr
+    container_name: capture-and-ocr
+    ports:
+      - "3003:3000"
+    restart: "no"

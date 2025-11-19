@@ -1,16 +1,12 @@
-FROM arm64v8/debian:bullseye-slim
+FROM --platform=linux/arm64/v8 arm64v8/python:3.10-bullseye
 
-
-# Install dependencies and setup Node.js 18 repository
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-deu \
     tesseract-ocr-osd \
-    curl \
-    ca-certificates \
-    fonts-liberation \
     chromium \
+    fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -26,19 +22,20 @@ RUN apt-get update && apt-get install -y \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
+    curl \
+    ca-certificates \
     --no-install-recommends && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY package*.json ./
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-
-RUN npm install
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["node", "screenshot.js"]
+ENV PYPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+EXPOSE 3000
+
+CMD ["python", "app.py"]

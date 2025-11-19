@@ -1,0 +1,252 @@
+from flask import Flask, request, send_file, jsonify
+import subprocess
+from PIL import Image
+import cv2
+import numpy as np
+import pytesseract
+import os
+import logging
+
+import concurrent.futures
+
+
+
+default_url = os.environ.get("URL")
+app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
+
+
+# Define rectangles (x, y, width, height)
+
+main = {
+    "Pause": (173, 476, 68, 23),
+    "RLM": (719, 456, 54, 18),
+    "Takt": (176, 451, 64, 18),
+    "P": (208, 338, 41, 16),
+    "S": (207, 309, 44, 16),
+    "Temp_oben": (717, 276, 56, 19),
+    "T": (730, 223, 40, 19),
+    "titel": (5, 214, 270, 25),
+    "O2": (726, 195, 48, 23),
+    "Prozent": (555, 195, 48, 23),
+    "I": (734, 151, 39, 18),
+    "U": (654, 151, 39, 18),
+    "Solltemp_Kessel": (191, 151, 83, 28),
+    "Kesseltemperatur": (192, 114, 81, 31),
+    "zeit": (706, 116, 76, 28),
+    "text": (400, 112, 297, 35),
+    "uhrzeit": (302, 74, 196, 31),
+    "betriebsart": (600, 74, 200, 33),
+    "party": (305, 509, 89, 39),
+    "sollwerte": (405, 509, 89, 39),
+}
+
+boiler = {
+    "zeit": (706, 116, 76, 28),
+    "text": (400, 112, 297, 35),
+    "unten": (242, 430, 56, 21),
+    "mitte": (244, 357, 52, 19),
+    "oben": (244, 282, 52, 19),
+    "messung_1": (37, 152, 41, 16),
+    "messung_2": (37, 177, 41, 16),
+    "rohr_oben": (23, 211, 54, 19),
+    "rohr_unten": (13, 436, 54, 19),
+    "heizkreis_2": (448, 251, 54, 19),
+    "heizkreis_1": (368, 251, 54, 19),
+    "Kesseltemperatur": (192, 114, 81, 31),
+    "uhrzeit": (302, 74, 196, 31),
+    "betriebsart": (600, 74, 200, 33),
+    "party": (305, 509, 89, 39),
+    "sollwerte": (405, 509, 89, 39),
+}
+
+sollwerte_rect = (405, 509, 89, 39)
+
+
+
+def preprocess_image_for_ocr(pil_img, rect: tuple):
+    x, y, w, h = rect
+    cropped = pil_img.crop((x, y, x + w, y + h))
+
+    # Convert PIL Image to numpy array
+    img = np.array(cropped.convert("L"))  # grayscale
+
+    # Apply thresholding
+    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_OTSU)
+
+    if img.mean() < 127:
+        img = cv2.bitwise_not(img)
+
+    # Convert back to PIL Image
+    return Image.fromarray(img)
+
+
+def crop_and_ocr(image: Image.Image, rect: tuple) -> str:
+    preprocessed = preprocess_image_for_ocr(image, rect)
+    text = pytesseract.image_to_string(preprocessed, "deu", "--psm 6").strip()
+    try:
+        result =  float(text.replace(",", ".").lower().replace("ö", "0").replace("o", "0"))
+    except:
+        result = text
+    return result
+
+
+def capture_heizomat(screenshot1_path: str, screenshot2_path: str) -> dict:
+    img1 = Image.open(screenshot1_path)
+    img2 = Image.open(screenshot2_path)
+
+    # Check if "sollwerte" is detected on screenshot 1 or 2 by OCR
+    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
+    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
+
+    app.logger.info(f"Sollwerte text 1: {sollwerte_text_1}")
+    app.logger.info(f"Sollwerte text 2: {sollwerte_text_2}")
+
+    # Determine which dict to use first screenshot and second
+    # If "sollwerte" present in screenshot1 using boiler dict there, else main dict
+    if "sollwerte" in sollwerte_text_1.lower():
+        first_img_dict = boiler
+        second_img_dict = main
+        first_suffix = "_boiler"
+        second_suffix = "_haupt"
+    elif "sollwerte" in sollwerte_text_2.lower():
+        first_img_dict = main
+        second_img_dict = boiler
+        first_suffix = "_haupt"
+        second_suffix = "_boiler"
+    else:
+        # Default fallback if "sollwerte" not detected - assign boiler to screenshot1
+        first_img_dict = main
+        second_img_dict = main
+        first_suffix = "_haupt"
+        second_suffix = "_haupt2"
+
+    result = {}
+
+    # Extract OCR from all fields in first image dict
+    for k, rect in first_img_dict.items():
+        text = crop_and_ocr(img1, rect)
+        key = f"{k}{first_suffix}"
+        result[key] = text
+
+    # Extract OCR from all fields in second image dict
+    for k, rect in second_img_dict.items():
+        text = crop_and_ocr(img2, rect)
+        key = f"{k}{second_suffix}"
+        result[key] = text
+
+    # # Ensure "sollwerte" rectangle appears only once
+    # sollwerte_key = f"sollwerte{first_suffix}" if "sollwerte" in result else f"sollwerte{second_suffix}"
+
+    # Extract sollwerte once from the image where detected
+    if "sollwerte" not in result:
+        if "sollwerte" in sollwerte_text_1.lower():
+            result[sollwerte_key] = sollwerte_text_1
+        elif "sollwerte" in sollwerte_text_2.lower():
+            result[sollwerte_key] = sollwerte_text_2
+        else:
+            # Optional: OCR on sollwerte rect of first image default if not found above
+            result[sollwerte_key] = crop_and_ocr(img1, sollwerte_rect)
+
+    return result
+
+def ocr_field(img, key, rect, suffix):
+    result = crop_and_ocr(img, rect)
+
+    return (f"{key}{suffix}", result)
+
+def capture_heizomat_parallel(screenshot1_path: str, screenshot2_path: str) -> dict:
+    img1 = Image.open(screenshot1_path)
+    img2 = Image.open(screenshot2_path)
+
+    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
+    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
+
+    if "sollwerte" in sollwerte_text_1.lower():
+        first_img_dict = boiler
+        second_img_dict = main
+        first_suffix = "_boiler"
+        second_suffix = "_haupt"
+    elif "sollwerte" in sollwerte_text_2.lower():
+        first_img_dict = main
+        second_img_dict = boiler
+        first_suffix = "_haupt"
+        second_suffix = "_boiler"
+    else:
+        first_img_dict = main
+        second_img_dict = main
+        first_suffix = "_haupt"
+        second_suffix = "_haupt2"
+
+    result = {}
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Prepare futures for first image fields
+        futures_first = [executor.submit(ocr_field, img1, k, rect, first_suffix)
+                         for k, rect in first_img_dict.items()]
+        # Prepare futures for second image fields
+        futures_second = [executor.submit(ocr_field, img2, k, rect, second_suffix)
+                          for k, rect in second_img_dict.items()]
+
+        # # Collect results as they complete
+        # for future in concurrent.futures.as_completed(futures_first + futures_second):
+        #     key, text = future.result()
+        #     result[key] = text
+
+        # Collect results as they complete
+        result = dict(
+            future.result()
+            for future
+            in concurrent.futures.as_completed(futures_first + futures_second)
+        )
+
+    return result
+
+
+
+@app.route('/capture')
+def capture():
+    app.logger.info('Capture request received')
+    url = request.args.get('url', default=default_url)
+    if not url:
+        return 'Missing url parameter', 400
+    screenshot_path = 'screenshot.png'
+    subprocess.run(['python3', 'capture_screenshot_script.py', 'single', url, screenshot_path], check=True)
+    return send_file(screenshot_path, mimetype='image/png')
+
+@app.route('/capture-and-ocr')
+def capture_and_ocr():
+    app.logger.info('Capture and OCR request received')
+    url = request.args.get('url', default=default_url)
+    if not url:
+        return 'Missing url parameter', 400
+    screenshot_path = 'screenshot.png'
+    subprocess.run(['python3', 'capture_screenshot_script.py', 'single', url, screenshot_path], check=True)
+    ocr_text = pytesseract.image_to_string(Image.open(screenshot_path))
+    os.remove(screenshot_path)
+    return jsonify({'text': ocr_text})
+
+@app.route('/capture-heizomat')
+def capture_heizomat_route():
+    app.logger.info('Capture Heizomat request received')
+    url = request.args.get('url', default=default_url)
+
+    if not url:
+        return 'Missing url parameter', 400
+
+    x = request.args.get('x', default=649, type=int)
+    y = request.args.get('y', default=528, type=int)
+
+    # Run double screenshot subprocess (creates screenshot1.png and screenshot2.png)
+    subprocess.run(['python3', 'capture_screenshot_script.py', 'double', url, str(x), str(y)], check=True)
+
+    app.logger.info('Start OCR processing')
+
+    # Run your OCR extraction logic on these two screenshots
+    ocr_results = capture_heizomat_parallel('screenshot1.png', 'screenshot2.png')
+
+    # Return as JSON response
+    return jsonify(ocr_results)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000)

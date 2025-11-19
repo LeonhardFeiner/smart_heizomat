@@ -1,0 +1,6 @@
+flask==2.3.2
+pyppeteer==1.0.2
+pytesseract==0.3.13
+pillow==10.0.0
+opencv-python==4.8.0.74
+numpy<2

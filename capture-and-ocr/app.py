@@ -155,16 +155,11 @@ def capture_heizomat_parallel(*screenshot_pathes: list[str]) -> dict:
             for key, rect in img_dict.items()
         }
 
-        sorted_futures = dict(sorted(futures.items()))
-
         # Collect results as they complete
         result = {
             key: future.result()
             for key, future
-            in zip(
-                sorted_futures.keys(),
-                concurrent.futures.as_completed(sorted_futures.values())
-            )
+            in sorted(futures.items())
         }
 
     return result

@@ -20,7 +20,6 @@ app.logger.setLevel(logging.INFO)
 
 main = {
     "Pause": (173, 476, 68, 23),
-    "RLM": (719, 456, 54, 18),
     "Takt": (176, 451, 64, 18),
     "Hackgut_P": (208, 338, 41, 16),
     "Hackgut_S": (207, 309, 44, 16),

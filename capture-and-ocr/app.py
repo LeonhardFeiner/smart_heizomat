@@ -63,6 +63,42 @@ boiler = {
 sollwerte_rect = (405, 509, 89, 39)
 
 
+def get_associations(images) -> list[tuple[str, dict]]:
+
+    img1, img2 = images
+
+    # Check if "sollwerte" is detected on screenshot 1 or 2 by OCR
+    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
+    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
+
+    app.logger.info(f"Sollwerte text 1: {sollwerte_text_1}")
+    app.logger.info(f"Sollwerte text 2: {sollwerte_text_2}")
+
+
+    first_suffix = ""
+    second_suffix = ""
+
+    # Determine which dict to use first screenshot and second
+    # If "sollwerte" present in screenshot1 using boiler dict there, else main dict
+    if "sollwerte" in sollwerte_text_1.lower():
+        first_img_dict = boiler
+        second_img_dict = main
+        # first_suffix = "_boiler"
+        # second_suffix = "_haupt"
+    elif "sollwerte" in sollwerte_text_2.lower():
+        first_img_dict = main
+        second_img_dict = boiler
+        # first_suffix = "_haupt"
+        # second_suffix = "_boiler"
+    else:
+        # Default fallback if "sollwerte" not detected - assign boiler to screenshot1
+        first_img_dict = main
+        second_img_dict = main
+        # first_suffix = "_haupt"
+        second_suffix = "2"
+
+    return [(first_img_dict, first_suffix), (second_img_dict, second_suffix)]
+
 
 def preprocess_image_for_ocr(pil_img, rect: tuple):
     x, y, w, h = rect
@@ -84,121 +120,52 @@ def preprocess_image_for_ocr(pil_img, rect: tuple):
 def crop_and_ocr(image: Image.Image, rect: tuple) -> str:
     preprocessed = preprocess_image_for_ocr(image, rect)
     text = pytesseract.image_to_string(preprocessed, "deu", "--psm 6").strip()
+
+    result = text
     try:
-        result =  float(text.replace(",", ".").lower().replace("ö", "0").replace("o", "0"))
+        number_str = text.replace(",", ".").lower().replace("ö", "0").replace("o", "0")
+        result = float(number_str)
+        result = int(number_str) if result.is_integer() else result
     except:
-        result = text
+        pass
     return result
 
 
-def capture_heizomat(screenshot1_path: str, screenshot2_path: str) -> dict:
-    img1 = Image.open(screenshot1_path)
-    img2 = Image.open(screenshot2_path)
+def capture_heizomat(*screenshot_pathes: list[str]) -> dict:
+    imgs = [Image.open(path) for path in screenshot_pathes]
+    suffix_img_dict_list = get_associations(imgs)
 
-    # Check if "sollwerte" is detected on screenshot 1 or 2 by OCR
-    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
-    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
+    result = {
+        f"{k}{suffix}" : crop_and_ocr(img1, rect)
+        for img1, (img_dict, suffix) in zip(imgs, suffix_img_dict_list)
+        for k, rect in img_dict.items()
+    }
 
-    app.logger.info(f"Sollwerte text 1: {sollwerte_text_1}")
-    app.logger.info(f"Sollwerte text 2: {sollwerte_text_2}")
+    return dict(sorted(result.items()))
 
-    # Determine which dict to use first screenshot and second
-    # If "sollwerte" present in screenshot1 using boiler dict there, else main dict
-    if "sollwerte" in sollwerte_text_1.lower():
-        first_img_dict = boiler
-        second_img_dict = main
-        first_suffix = "_boiler"
-        second_suffix = "_haupt"
-    elif "sollwerte" in sollwerte_text_2.lower():
-        first_img_dict = main
-        second_img_dict = boiler
-        first_suffix = "_haupt"
-        second_suffix = "_boiler"
-    else:
-        # Default fallback if "sollwerte" not detected - assign boiler to screenshot1
-        first_img_dict = main
-        second_img_dict = main
-        first_suffix = "_haupt"
-        second_suffix = "_haupt2"
 
-    result = {}
-
-    # Extract OCR from all fields in first image dict
-    for k, rect in first_img_dict.items():
-        text = crop_and_ocr(img1, rect)
-        key = f"{k}{first_suffix}"
-        result[key] = text
-
-    # Extract OCR from all fields in second image dict
-    for k, rect in second_img_dict.items():
-        text = crop_and_ocr(img2, rect)
-        key = f"{k}{second_suffix}"
-        result[key] = text
-
-    # # Ensure "sollwerte" rectangle appears only once
-    # sollwerte_key = f"sollwerte{first_suffix}" if "sollwerte" in result else f"sollwerte{second_suffix}"
-
-    # Extract sollwerte once from the image where detected
-    if "sollwerte" not in result:
-        if "sollwerte" in sollwerte_text_1.lower():
-            result[sollwerte_key] = sollwerte_text_1
-        elif "sollwerte" in sollwerte_text_2.lower():
-            result[sollwerte_key] = sollwerte_text_2
-        else:
-            # Optional: OCR on sollwerte rect of first image default if not found above
-            result[sollwerte_key] = crop_and_ocr(img1, sollwerte_rect)
-
-    return result
-
-def ocr_field(img, key, rect, suffix):
-    result = crop_and_ocr(img, rect)
-
-    return (f"{key}{suffix}", result)
-
-def capture_heizomat_parallel(screenshot1_path: str, screenshot2_path: str) -> dict:
-    img1 = Image.open(screenshot1_path)
-    img2 = Image.open(screenshot2_path)
-
-    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
-    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
-
-    if "sollwerte" in sollwerte_text_1.lower():
-        first_img_dict = boiler
-        second_img_dict = main
-        first_suffix = "_boiler"
-        second_suffix = "_haupt"
-    elif "sollwerte" in sollwerte_text_2.lower():
-        first_img_dict = main
-        second_img_dict = boiler
-        first_suffix = "_haupt"
-        second_suffix = "_boiler"
-    else:
-        first_img_dict = main
-        second_img_dict = main
-        first_suffix = "_haupt"
-        second_suffix = "_haupt2"
-
-    result = {}
+def capture_heizomat_parallel(*screenshot_pathes: list[str]) -> dict:
+    imgs = [Image.open(path) for path in screenshot_pathes]
+    suffix_img_dict_list = get_associations(imgs)
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Prepare futures for first image fields
-        futures_first = [executor.submit(ocr_field, img1, k, rect, first_suffix)
-                         for k, rect in first_img_dict.items()]
-        # Prepare futures for second image fields
-        futures_second = [executor.submit(ocr_field, img2, k, rect, second_suffix)
-                          for k, rect in second_img_dict.items()]
+        futures = {
+            f"{key}{suffix}": executor.submit(crop_and_ocr, img, rect)
+            for img, (img_dict, suffix) in zip(imgs, suffix_img_dict_list)
+            for key, rect in img_dict.items()
+        }
 
-        # # Collect results as they complete
-        # for future in concurrent.futures.as_completed(futures_first + futures_second):
-        #     key, text = future.result()
-        #     result[key] = text
+        sorted_futures = dict(sorted(futures.items()))
 
         # Collect results as they complete
-        result = dict(
-            future.result()
-            for future
-            in concurrent.futures.as_completed(futures_first + futures_second)
-        )
+        result = {
+            key: future.result()
+            for key, future
+            in zip(
+                sorted_futures.keys(),
+                concurrent.futures.as_completed(sorted_futures.values())
+            )
+        }
 
     return result
 

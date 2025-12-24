@@ -3,20 +3,33 @@ services:
     build: ./novnc_arm_dotcurser
     container_name: novnc
     network_mode: "host"
-    # network_mode: "bridge"
     environment:
       - VNC_SERVER=192.168.0.8
     ports:
-      - "6080:6080"  # Host port 6080 to container port 80 for noVNC
-      # - "127.0.0.1:6080:6080"  # Host port 6080 to container port 80 for noVNC
+      - "6080:6080"
     restart: unless-stopped
 
-  capture-and-ocr:
-    build: ./capture-and-ocr
-    container_name: capture-and-ocr
-    ports:
-      - "3003:3000"
-    restart: "no"
+  # capture-and-ocr:
+  #   build: ./capture-and-ocr
+  #   container_name: capture-and-ocr
+  #   ports:
+  #     - "3003:3000"
+  #   restart: "no"
+  #   environment:
+  #     - FLASK_ENV=development
+  #     - URL=http://192.168.0.2:6080/vnc_lite.html?password=heizomat&scale=true
+
+
+  heizomat-mqtt:
+    build: ./heizomat-mqtt
+    container_name: heizomat-mqtt
+    network_mode: "host"
     environment:
-      - FLASK_ENV=development
       - URL=http://192.168.0.2:6080/vnc_lite.html?password=heizomat&scale=true
+      - MQTT_BROKER_HOST=192.168.0.2
+      - MQTT_BROKER_PORT=1883
+      - MQTT_TOPIC=heizomat/l1_hackschnitzel
+      - SENSOR_BASENAME=l1_hackschnitzel
+      - PUBLISH_INTERVAL=10
+
+    restart: unless-stopped

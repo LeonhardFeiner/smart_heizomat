@@ -30,6 +30,7 @@ URL = os.environ.get("URL")
 MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "localhost")
 MQTT_BROKER_PORT = int(os.environ.get("MQTT_BROKER_PORT", "1883"))
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "heizomat/values")
+SENSOR_BASENAME = os.environ.get("SENSOR_BASENAME", "heizomat")
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
 PUBLISH_INTERVAL = float(os.environ.get("PUBLISH_INTERVAL", "10"))
@@ -213,11 +214,10 @@ def create_ha_discovery(key: str, sensor_config: SensorConfig):
 
     config = {
         "name": key,
-        "default_entity_id": f"sensor.heizomat_{object_id}",
-        "unique_id": f"heizomat_{object_id}",
-        "state_topic": state_topic(key),
-        # "value_template": f"{{{{ value_json.values.{key} }}}}",
-        # "availability_topic": "heizomat/values/$state",
+        "default_entity_id": f"sensor.{SENSOR_BASENAME}_{object_id}",
+        "unique_id": f"{SENSOR_BASENAME}_{object_id}",
+        "state_topic": MQTT_TOPIC,
+        "value_template": f"{{{{ value_json.get('{key}', '') }}}}",
         "payload_available": "ready",
         "payload_not_available": "lost",
         "device": {
@@ -289,11 +289,8 @@ if __name__ == "__main__":
 
             if mqtt_connected and mqtt_client and values:
                 # publish each sensor individually
-                for key, val in values.items():
-                    topic = f"{MQTT_TOPIC}/{key}"
-                    # handle None values gracefully
-                    payload = val if val is not None else ""
-                    mqtt_client.publish(topic, payload, qos=1, retain=True)
+                payload = json.dumps(values)
+                mqtt_client.publish(MQTT_TOPIC, payload, qos=1, retain=False)
                 logger.info(f"📤 Published {len(values)} individual sensors → {MQTT_TOPIC}/")
 
             else:

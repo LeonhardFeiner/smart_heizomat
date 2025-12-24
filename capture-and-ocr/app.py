@@ -19,40 +19,40 @@ app.logger.setLevel(logging.INFO)
 # Define rectangles (x, y, width, height)
 
 main = {
-    "Pause": (173, 476, 68, 23),
-    "Takt": (176, 451, 64, 18),
-    "Hackgut_P": (208, 338, 41, 16),
-    "Hackgut_S": (207, 309, 44, 16),
-    "Abgas_Temperatur": (730, 223, 40, 19),
-    "Abgas_Restsauerstoff": (726, 195, 48, 23),
-    "Geblaeseleistung": (555, 195, 48, 23),
-    "Partikelabscheider_Strom": (734, 151, 39, 18),
-    "Partikelabscheider_Spannung": (654, 151, 39, 18),
-    "Kessel_Solltemperatur": (191, 151, 83, 28),
-    "Kessel_Temperatur": (192, 114, 81, 31),
-    "RuecklaufMischer_Temperatur": (719, 456, 54, 18),
-    "Zustandrestzeit": (706, 116, 76, 28),
-    "Brennstoff": (8, 217, 264, 21),
-    "Betriebszustand": (403, 115, 291, 29),
-    "Uhrzeit": (302, 74, 196, 31),
-    "Betriebsart": (600, 74, 200, 33),
+    "Pause": ((173, 476, 68, 23), None),
+    "Takt": ((176, 451, 64, 18), None),
+    "Hackgut_P": ((208, 338, 41, 16), (0, 100)),
+    "Hackgut_S": ((207, 309, 44, 16), (0, 100)),
+    "Abgas_Temperatur": ((730, 223, 40, 19), (10, 100)),
+    "Abgas_Restsauerstoff": ((726, 195, 48, 23), (0, 100)),
+    "Geblaeseleistung": ((555, 195, 48, 23), (0, 100)),
+    "Partikelabscheider_Strom": ((734, 151, 39, 18), (0, 100)),
+    "Partikelabscheider_Spannung": ((654, 151, 39, 18), (0, 100)),
+    "Kessel_Solltemperatur": ((191, 151, 83, 28), (10, 90)),
+    "Kessel_Temperatur": ((192, 114, 81, 31), (10, 90)),
+    "RuecklaufMischer_Temperatur": ((719, 456, 54, 18), (10, 90)),
+    "Zustandrestzeit": ((706, 116, 76, 28), None),
+    "Brennstoff": ((8, 217, 264, 21), None),
+    "Betriebszustand": ((403, 115, 291, 29), None),
+    "Uhrzeit": ((302, 74, 196, 31), None),
+    "Betriebsart": ((600, 74, 200, 33), None),
     # "Kessel_Temperatur2": (717, 276, 56, 19),
     # "Party": (305, 509, 89, 39),
     # "sollwerte": (405, 509, 89, 39),
 }
 
 boiler = {
-    "BoilerUnten_Temperatur": (244, 432, 52, 19),
-    "BoilerMitte_Temperatur": (244, 357, 52, 19),
-    "BoilerOben_Temperatur": (244, 282, 52, 19),
-    "Sensor_Temperatur": (37, 152, 41, 16),
-    "Sensor_Durschnittstemperatur": (37, 177, 41, 16),
-    "Rohr_oben": (23, 211, 54, 19),
-    "Heizkreis_1": (368, 251, 54, 19),
-    "Heizkreis_2": (448, 251, 54, 19),
+    "BoilerUnten_Temperatur": ((244, 432, 52, 19), (10, 90)),
+    "BoilerMitte_Temperatur": ((244, 357, 52, 19), (10, 90)),
+    "BoilerOben_Temperatur": ((244, 282, 52, 19), (10, 90)),
+    "Sensor_Temperatur": ((37, 152, 41, 16), (0, 90)),
+    "Sensor_Durschnittstemperatur": ((37, 177, 41, 16), (0, 90)),
+    "Heizkreis_1": ((368, 251, 54, 19), (10, 90)),
+    "Heizkreis_2": ((448, 251, 54, 19), (10, 90)),
+    # "Rohr_oben": (23, 211, 54, 19),
     # "Zustandrestzeit": (706, 116, 76, 28),
     # "Betriebszustand": (403, 115, 291, 29),
-    # "RücklaufMischer_Temperatur": (13, 436, 54, 19),
+    # "RuecklaufMischer_Temperatur": (13, 436, 54, 19),
     # "Kessel_Temperatur": (192, 114, 81, 31),
     # "Uhrzeit": (302, 74, 196, 31),
     # "Betriebsart": (600, 74, 200, 33),
@@ -68,8 +68,8 @@ def get_associations(images) -> list[tuple[str, dict]]:
     img1, img2 = images
 
     # Check if "sollwerte" is detected on screenshot 1 or 2 by OCR
-    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect)
-    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect)
+    sollwerte_text_1 = crop_and_ocr(img1, sollwerte_rect, None)
+    sollwerte_text_2 = crop_and_ocr(img2, sollwerte_rect, None)
 
     app.logger.info(f"Sollwerte text 1: {sollwerte_text_1}")
     app.logger.info(f"Sollwerte text 2: {sollwerte_text_2}")
@@ -116,8 +116,19 @@ def preprocess_image_for_ocr(pil_img, rect: tuple):
     # Convert back to PIL Image
     return Image.fromarray(img)
 
+def ensure_within_range(value, value_range: tuple[int, int] | None) -> bool:
+    if value_range is None:
+        return value
+    min_val, max_val = value_range
+    while min_val is not None and min_val > np.abs(value):
+        value /= 10
 
-def crop_and_ocr(image: Image.Image, rect: tuple) -> str:
+    while max_val is not None and max_val < np.abs(value):
+        value *= 10
+
+    return value
+
+def crop_and_ocr(image: Image.Image, rect: tuple, value_range: tuple[int, int] | None) -> str:
     preprocessed = preprocess_image_for_ocr(image, rect)
     text = pytesseract.image_to_string(preprocessed, "deu", "--psm 6").strip()
 
@@ -125,7 +136,10 @@ def crop_and_ocr(image: Image.Image, rect: tuple) -> str:
     try:
         number_str = text.replace(",", ".").lower().replace("ö", "0").replace("o", "0")
         result = float(number_str)
+        result = ensure_within_range(result, value_range)
         result = int(number_str) if result.is_integer() else result
+        result = ensure_within_range(result, value_range)
+
     except:
         pass
     return result
@@ -136,9 +150,9 @@ def capture_heizomat(*screenshot_pathes: list[str]) -> dict:
     suffix_img_dict_list = get_associations(imgs)
 
     result = {
-        f"{k}{suffix}" : crop_and_ocr(img1, rect)
+        f"{k}{suffix}" : crop_and_ocr(img1, rect, value_range)
         for img1, (img_dict, suffix) in zip(imgs, suffix_img_dict_list)
-        for k, rect in img_dict.items()
+        for k, (rect, max_val) in img_dict.items()
     }
 
     return dict(sorted(result.items()))
@@ -150,9 +164,9 @@ def capture_heizomat_parallel(*screenshot_pathes: list[str]) -> dict:
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {
-            f"{key}{suffix}": executor.submit(crop_and_ocr, img, rect)
+            f"{key}{suffix}": executor.submit(crop_and_ocr, img, rect, value_range)
             for img, (img_dict, suffix) in zip(imgs, suffix_img_dict_list)
-            for key, rect in img_dict.items()
+            for key, (rect, value_range) in img_dict.items()
         }
 
         # Collect results as they complete

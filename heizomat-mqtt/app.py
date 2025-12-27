@@ -81,6 +81,8 @@ main_sensors = [
         device_class="duration",
         state_class="measurement",
         icon="mdi:timer",
+        min_value=1,
+        max_value=30,
     ),
     SensorConfig(
         name="Hackgut_P",
@@ -146,7 +148,7 @@ main_sensors = [
         state_class="measurement",
         icon="mdi:current-dc",
         min_value=0,
-        max_value=1,
+        max_value=0.2,
     ),
     SensorConfig(
         name="Partikelabscheider_Spannung",
@@ -157,7 +159,7 @@ main_sensors = [
         state_class="measurement",
         icon="mdi:current-dc",
         min_value=0,
-        max_value=99,
+        max_value=30,
     ),
     SensorConfig(
         name="Kessel_Solltemperatur",
@@ -322,6 +324,8 @@ boiler_sensors = [
 
 sollwerte = SensorConfig("sollwerte", (405, 509, 89, 39), "text")
 
+last_values = {}
+
 
 # ----------------------------------------------------------------------
 # PARSING FUNCTIONS
@@ -396,7 +400,12 @@ def parse_value(raw_text, config):
                 f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
                 f" below min {config.min_value} for sensor '{config.name}'"
             )
-            result = None
+            if last_values.get(config.name) is not None:
+                while result * 1.75 < last_values[config.name]:
+                    result *= 10
+                if not result * 0.75 < last_values[config.name]:
+                    result = None
+                logger.warning(f"Corrected value {result} for sensor '{config.name}'")
 
     if result is not None and config.max_value is not None:
         if result > config.max_value:
@@ -404,7 +413,15 @@ def parse_value(raw_text, config):
                 f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
                 f" above max {config.max_value} for sensor '{config.name}'"
             )
-            result = None
+            if last_values.get(config.name) is not None:
+                while result * 0.75 > last_values[config.name]:
+                    result /= 10
+                if not result * 1.25 > last_values[config.name]:
+                    result = None
+                logger.warning(f"Corrected value {result} for sensor '{config.name}'")
+
+    if result is not None:
+        last_values[config.name] = result
 
     return result  # if result is not None else raw_text
 

@@ -19,11 +19,12 @@ import paho.mqtt.client as mqtt
 import re
 from dataclasses import dataclass
 from typing import Tuple, Optional
+import datetime
 
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 URL = os.environ.get("URL")
@@ -43,52 +44,306 @@ logger.info(f"🚀 Heizomat MQTT v4.0 - Dataclass Edition")
 logger.info(f"📍 URL={URL}")
 logger.info(f"📍 MQTT={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
 
+
 # ----------------------------------------------------------------------
 # SINGLE DATACLASS - ALL SENSOR INFO
 # ----------------------------------------------------------------------
 @dataclass
 class SensorConfig:
-    rect: Tuple[int, int, int, int]      # (x, y, w, h)
-    parser_type: str                     # "float", "int", "text"
-    unit: Optional[str] = None
-    device_class: Optional[str] = None
+    name: str
+    rect: Tuple[int, int, int, int]  # (x, y, w, h)
+    parser_type: str  # "float", "int", "text"
+    page_segmentation_mode: int = 7
+    unit: str | None = None
+    device_class: str | None = None
+    state_class: str | None = None
     icon: str = "mdi:counter"
+    min_value: float | int | None = None
+    max_value: float | int | None = None
+
 
 # MAIN SENSORS
-main_sensors = {
-    "Pause": SensorConfig((173, 476, 68, 23), "float", icon="mdi:pause"),
-    "Takt": SensorConfig((176, 451, 64, 18), "float", icon="mdi:timer"),
-    "Hackgut_P": SensorConfig((208, 338, 41, 16), "int", "%", icon="mdi:molecule"),
-    "Hackgut_S": SensorConfig((207, 309, 44, 16), "int", "%", icon="mdi:molecule"),
-    "Abgas_Temperatur": SensorConfig((730, 223, 40, 19), "int", "°C", "temperature", "mdi:thermometer-lines"),
-    "Abgas_Restsauerstoff": SensorConfig((726, 195, 48, 23), "float", "%", icon="mdi:molecule"),
-    "Geblaeseleistung": SensorConfig((555, 195, 48, 23), "int", "%", icon="mdi:fan"),
-    "Partikelabscheider_Strom": SensorConfig((734, 151, 39, 18), "float", "mA", "current", "mdi:current-dc"),
-    "Partikelabscheider_Spannung": SensorConfig((654, 151, 39, 18), "float", "kV", "voltage", "mdi:current-dc"),
-    "Kessel_Solltemperatur": SensorConfig((191, 151, 83, 28), "int", "°C", "temperature", "mdi:thermometer-chevron-up"),
-    "Kessel_Temperatur": SensorConfig((192, 114, 81, 31), "float", "°C", "temperature", "mdi:thermometer"),
-    "RuecklaufMischer_Temperatur": SensorConfig((719, 456, 54, 18), "float", "°C", "temperature", "mdi:pipe-valve"),
-    "Zustandrestzeit": SensorConfig((706, 116, 76, 28), "int", icon="mdi:clock-alert"),
-    "Brennstoff": SensorConfig((8, 217, 264, 21), "text", icon="mdi:fuel"),
-    "Betriebszustand": SensorConfig((403, 115, 291, 29), "text", icon="mdi:power"),
-    "Uhrzeit": SensorConfig((302, 74, 196, 31), "text", icon="mdi:clock"),
-    "Betriebsart": SensorConfig((600, 74, 200, 33), "text", icon="mdi:cog"),
-}
+main_sensors = [
+    SensorConfig(
+        name="Pause",
+        rect=(173, 476, 68, 23),
+        parser_type="float",
+        unit="s",
+        device_class="duration",
+        state_class="measurement",
+        icon="mdi:pause",
+    ),
+    SensorConfig(
+        name="Takt",
+        rect=(176, 451, 64, 18),
+        parser_type="float",
+        unit="s",
+        device_class="duration",
+        state_class="measurement",
+        icon="mdi:timer",
+    ),
+    SensorConfig(
+        name="Hackgut_P",
+        rect=(208, 338, 41, 16),
+        parser_type="int",
+        unit="%",
+        device_class=None,
+        state_class="measurement",
+        icon="mdi:molecule",
+        min_value=0,
+        max_value=100,
+    ),
+    SensorConfig(
+        name="Hackgut_S",
+        rect=(207, 309, 44, 16),
+        parser_type="int",
+        unit="%",
+        device_class=None,
+        state_class="measurement",
+        icon="mdi:molecule",
+        min_value=0,
+        max_value=100,
+    ),
+    SensorConfig(
+        name="Abgas_Temperatur",
+        rect=(730, 223, 40, 19),
+        parser_type="int",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer-lines",
+        min_value=30,
+        max_value=300,
+    ),
+    SensorConfig(
+        name="Abgas_Restsauerstoff",
+        rect=(726, 195, 48, 23),
+        parser_type="float",
+        unit="%",
+        device_class=None,
+        state_class="measurement",
+        icon="mdi:molecule",
+        min_value=2,
+        max_value=21,
+    ),
+    SensorConfig(
+        name="Geblaeseleistung",
+        rect=(555, 195, 48, 23),
+        parser_type="int",
+        unit="%",
+        device_class=None,
+        state_class="measurement",
+        icon="mdi:fan",
+        min_value=0,
+        max_value=100,
+    ),
+    SensorConfig(
+        name="Partikelabscheider_Strom",
+        rect=(734, 151, 39, 18),
+        parser_type="float",
+        unit="mA",
+        device_class="current",
+        state_class="measurement",
+        icon="mdi:current-dc",
+        min_value=0,
+        max_value=1,
+    ),
+    SensorConfig(
+        name="Partikelabscheider_Spannung",
+        rect=(654, 151, 39, 18),
+        parser_type="float",
+        unit="kV",
+        device_class="voltage",
+        state_class="measurement",
+        icon="mdi:current-dc",
+        min_value=0,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Kessel_Solltemperatur",
+        rect=(191, 151, 83, 28),
+        parser_type="int",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer-chevron-up",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Kessel_Solltemperatur",
+        rect=(191, 151, 83, 28),
+        parser_type="int",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer-chevron-up",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Kessel_Temperatur",
+        rect=(192, 114, 81, 31),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="RuecklaufMischer_Temperatur",
+        rect=(719, 456, 54, 18),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:pipe-valve",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="RuecklaufMischer_Temperatur",
+        rect=(719, 456, 54, 18),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:pipe-valve",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="RuecklaufMischer_Temperatur",
+        rect=(719, 456, 54, 18),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:pipe-valve",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Brennstoff",
+        rect=(8, 217, 264, 21),
+        parser_type="text",
+        unit=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:fuel",
+    ),
+    SensorConfig(
+        name="Betriebszustand",
+        rect=(403, 115, 291, 29),
+        parser_type="text",
+        unit=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:power",
+    ),
+    SensorConfig(
+        name="Uhrzeit",
+        rect=(302, 74, 196, 31),
+        parser_type="datetime",
+        page_segmentation_mode=7,
+        unit=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:clock",
+    ),
+    SensorConfig(
+        name="Betriebsart",
+        rect=(600, 74, 200, 33),
+        parser_type="text",
+        unit=None,
+        device_class=None,
+        state_class=None,
+        icon="mdi:cog",
+    ),
+]
 
 # BOILER SENSORS
-boiler_sensors = {
-    "BoilerUnten_Temperatur": SensorConfig((244, 432, 52, 19), "float", "°C", "temperature", "mdi:thermometer"),
-    "BoilerMitte_Temperatur": SensorConfig((244, 357, 52, 19), "float", "°C", "temperature", "mdi:thermometer"),
-    "BoilerOben_Temperatur": SensorConfig((244, 282, 52, 19), "float", "°C", "temperature", "mdi:thermometer"),
-    "Sensor_Temperatur": SensorConfig((37, 152, 41, 16), "float", "°C", "temperature", "mdi:thermometer"),
-    "Sensor_Durschnittstemperatur": SensorConfig((37, 177, 41, 16), "float", "°C", "temperature", "mdi:thermometer"),
-    "Heizkreis_1": SensorConfig((368, 251, 54, 19), "float", "°C", "temperature", "mdi:radiator"),
-    "Heizkreis_2": SensorConfig((448, 251, 54, 19), "float", "°C", "temperature", "mdi:radiator"),
-}
+boiler_sensors = [
+    SensorConfig(
+        name="BoilerUnten_Temperatur",
+        rect=(244, 432, 52, 19),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="BoilerMitte_Temperatur",
+        rect=(244, 357, 52, 19),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="BoilerOben_Temperatur",
+        rect=(244, 282, 52, 19),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Sensor_Temperatur",
+        rect=(37, 152, 41, 16),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+    ),
+    SensorConfig(
+        name="Sensor_Durschnittstemperatur",
+        rect=(37, 177, 41, 16),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+    ),
+    SensorConfig(
+        name="Heizkreis_1",
+        rect=(368, 251, 54, 19),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:radiator",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        name="Heizkreis_2",
+        rect=(448, 251, 54, 19),
+        parser_type="float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:radiator",
+        min_value=10,
+        max_value=99,
+    ),
+]
 
 
+sollwerte = SensorConfig("sollwerte", (405, 509, 89, 39), "text")
 
-sollwerte_rect = (405, 509, 89, 39)
 
 # ----------------------------------------------------------------------
 # PARSING FUNCTIONS
@@ -96,43 +351,80 @@ sollwerte_rect = (405, 509, 89, 39)
 def parse_text(value):
     return str(value).strip()
 
+
 def parse_float(value):
     try:
         # cleaned = value.strip(" |°%mAkV")
-        cleaned = (
-            value.replace(",", ".")
-                 .replace("O", "0")
-                 .replace("I", "1")
-                 .replace("İ", "1")
-                 .replace("|", "")
-                 .strip()
-        )
-        cleaned = cleaned.replace(',', '.')
-        if cleaned.count('.') < 1:
-            cleaned = cleaned[:-1] + '.' + cleaned[-1]
+        cleaned = value.replace(",", ".").strip()
+        cleaned = cleaned.replace(",", ".")
+        if cleaned.count(".") < 1:
+            cleaned = cleaned[:-1] + "." + cleaned[-1]
         return float(cleaned)
     except:
         return None
+
 
 def parse_int(value):
     try:
-        cleaned = (
-            value.replace(",", ".")
-                 .replace("O", "0")
-                 .replace("I", "1")
-                 .replace("İ", "1")
-                 .replace("|", "")
-                 .strip()
-        )
+        cleaned = value.replace(",", ".").strip()
         return float(cleaned)
     except:
         return None
 
-def parse_value(raw_text, parser_type):
-    parsers = {"float": parse_float, "int": parse_int, "text": parse_text}
+
+def parse_datetime(value):
+    try:
+        cleaned = value.strip()
+        dt = datetime.datetime.strptime(cleaned, "%d.%m.%Y %H:%M:%S")
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except:
+        return None
+
+
+tessedit_char_whitelist = {
+    "float": "0123456789,",
+    "int": "0123456789",
+    "str": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄäÖöÜüß0123456789 ,.-",
+    # "datetime": "0123456789:. ",
+}
+
+
+def parse_value(raw_text, config):
+    parser_type = config.parser_type
+    parsers = {
+        "float": parse_float,
+        "int": parse_int,
+        "text": parse_text,
+        "datetime": parse_datetime,
+    }
     parser = parsers.get(parser_type, parse_text)
+
     result = parser(raw_text)
-    return result #if result is not None else raw_text
+
+    if result is None:
+        logger.warning(
+            f"Could not parse value for parser '{parser_type}': '{raw_text}'"
+            f" for sensor '{config.name}'"
+        )
+
+    if result is not None and config.min_value is not None:
+        if result < config.min_value:
+            logger.warning(
+                f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
+                f" below min {config.min_value} for sensor '{config.name}'"
+            )
+            result = None
+
+    if result is not None and config.max_value is not None:
+        if result > config.max_value:
+            logger.warning(
+                f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
+                f" above max {config.max_value} for sensor '{config.name}'"
+            )
+            result = None
+
+    return result  # if result is not None else raw_text
+
 
 # ----------------------------------------------------------------------
 # OCR Functions
@@ -146,16 +438,26 @@ def preprocess_image_for_ocr(pil_img, rect):
         img = cv2.bitwise_not(img)
     return Image.fromarray(img)
 
+
 def crop_and_ocr(image, sensor_config: SensorConfig):
     preprocessed = preprocess_image_for_ocr(image, sensor_config.rect)
-    raw_text = pytesseract.image_to_string(preprocessed, "deu", "--psm 6").strip()
-    return parse_value(raw_text, sensor_config.parser_type)
+
+    whitelist = tessedit_char_whitelist.get(sensor_config.parser_type)
+    config = f"--psm {sensor_config.page_segmentation_mode} --oem 3"
+    if whitelist:
+        config += f" -c tessedit_char_whitelist={whitelist}"
+
+    raw_text = pytesseract.image_to_string(
+        preprocessed, "deu", config=config  # Pass it here!
+    ).strip()
+    return parse_value(raw_text, sensor_config)
+
 
 def get_associations(images):
     img1, img2 = images
-    sollwerte_text_1 = crop_and_ocr(img1, SensorConfig(sollwerte_rect, "text"))
-    sollwerte_text_2 = crop_and_ocr(img2, SensorConfig(sollwerte_rect, "text"))
-    
+    sollwerte_text_1 = crop_and_ocr(img1, sollwerte)
+    sollwerte_text_2 = crop_and_ocr(img2, sollwerte)
+
     logger.debug(f"Sollwerte 1: '{sollwerte_text_1}' | 2: '{sollwerte_text_2}'")
 
     if isinstance(sollwerte_text_1, str) and "sollwerte" in sollwerte_text_1.lower():
@@ -164,37 +466,42 @@ def get_associations(images):
         return [(main_sensors, ""), (boiler_sensors, "")]
     return [(main_sensors, ""), ({}, "")]
 
+
 def capture_heizomat_parallel(screenshot1_path, screenshot2_path):
     imgs = [Image.open(screenshot1_path), Image.open(screenshot2_path)]
     suffix_img_dict_list = get_associations(imgs)
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {
-            f"{key}{suffix}": executor.submit(crop_and_ocr, img, sensor_config)
-            for img, (sensor_dict, suffix) in zip(imgs, suffix_img_dict_list)
-            for key, sensor_config in sensor_dict.items()
+            f"{sensor_config.name}{suffix}": executor.submit(
+                crop_and_ocr, img, sensor_config
+            )
+            for img, (sensor_list, suffix) in zip(imgs, suffix_img_dict_list)
+            for sensor_config in sensor_list
         }
         return {key: future.result() for key, future in sorted(futures.items())}
+
 
 # ----------------------------------------------------------------------
 # MAIN FUNCTIONS
 # ----------------------------------------------------------------------
 def read_values():
     x, y = 649, 528
-    
+
     logger.debug("📸 Capturing...")
-    subprocess.run([
-        'python3', 'capture_screenshot_script.py', 'double', 
-        URL, str(x), str(y)
-    ], check=True, capture_output=True)
-    
+    subprocess.run(
+        ["python3", "capture_screenshot_script.py", "double", URL, str(x), str(y)],
+        check=True,
+        capture_output=True,
+    )
+
     try:
-        values = capture_heizomat_parallel('screenshot1.png', 'screenshot2.png')
-        
-        for path in ['screenshot1.png', 'screenshot2.png']:
+        values = capture_heizomat_parallel("screenshot1.png", "screenshot2.png")
+
+        for path in ["screenshot1.png", "screenshot2.png"]:
             if os.path.exists(path):
                 os.remove(path)
-                
+
         logger.info(f"✅ OCR: {len(values)} values")
         return values
     except Exception as e:
@@ -204,6 +511,7 @@ def read_values():
 
 def state_topic(key: str) -> str:
     return f"{MQTT_TOPIC}/{key}"
+
 
 # ----------------------------------------------------------------------
 # HA Auto-Discovery
@@ -224,35 +532,42 @@ def create_ha_discovery(key: str, sensor_config: SensorConfig):
             "identifiers": ["heizomat"],
             "name": "Heizomat",
             "manufacturer": "Heizomat",
-            "model": "Biomass Boiler"
+            "model": "Biomass Boiler",
         },
-        "icon": sensor_config.icon
     }
 
     if sensor_config.unit:
         config["unit_of_measurement"] = sensor_config.unit
     if sensor_config.device_class:
         config["device_class"] = sensor_config.device_class
+    if sensor_config.state_class:
+        config["state_class"] = sensor_config.state_class
+    if sensor_config.icon:
+        config["icon"] = sensor_config.icon
 
     return discovery_topic, config
 
 
 def send_ha_discovery():
     logger.info("🚀 HA Auto-Discovery (25+ sensors)...")
-    
+
     # mqtt_client.publish("homeassistant/sensor/heizomat_+/config", "", qos=0, retain=False)
     # Main sensors
-    for key, sensor_config in chain(main_sensors.items(), boiler_sensors.items()):
-        topic, config = create_ha_discovery(key, sensor_config)
+    for sensor_config in chain(main_sensors, boiler_sensors):
+        topic, config = create_ha_discovery(sensor_config.name, sensor_config)
         mqtt_client.publish(topic, json.dumps(config), qos=0, retain=True)
-        logger.info(f"📡 {key}: {sensor_config.unit or 'text'} ({sensor_config.icon})")
-    
+        logger.info(
+            f"📡 {sensor_config.name}: {sensor_config.unit or 'text'} ({sensor_config.icon})"
+        )
+
     logger.info("✅ HA Discovery COMPLETE!")
+
 
 # ----------------------------------------------------------------------
 # MQTT Setup
 # ----------------------------------------------------------------------
 mqtt_connected = False
+
 
 def on_connect(client, userdata, flags, rc):
     global mqtt_connected
@@ -262,6 +577,7 @@ def on_connect(client, userdata, flags, rc):
         send_ha_discovery()
     else:
         logger.error(f"❌ MQTT failed rc={rc}")
+
 
 mqtt_client = mqtt.Client(client_id="heizomat-publisher")
 mqtt_client.on_connect = on_connect
@@ -291,7 +607,9 @@ if __name__ == "__main__":
                 # publish each sensor individually
                 payload = json.dumps(values)
                 mqtt_client.publish(MQTT_TOPIC, payload, qos=1, retain=False)
-                logger.info(f"📤 Published {len(values)} individual sensors → {MQTT_TOPIC}/")
+                logger.info(
+                    f"📤 Published {len(values)} individual sensors → {MQTT_TOPIC}/"
+                )
 
             else:
                 logger.warning("⏳ No MQTT connection or no values to publish")

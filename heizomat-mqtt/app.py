@@ -75,7 +75,7 @@ main_sensors = [
     ),
     SensorConfig(
         name="Takt",
-        rect=(176, 451, 64, 18),
+        rect=(176, 451, 64, 20),
         parser_type="float",
         unit="s",
         device_class="duration",
@@ -84,7 +84,7 @@ main_sensors = [
     ),
     SensorConfig(
         name="Hackgut_P",
-        rect=(208, 338, 41, 16),
+        rect=(208, 338, 41, 17),
         parser_type="int",
         unit="%",
         device_class=None,
@@ -95,7 +95,7 @@ main_sensors = [
     ),
     SensorConfig(
         name="Hackgut_S",
-        rect=(207, 309, 44, 16),
+        rect=(207, 309, 44, 17),
         parser_type="int",
         unit="%",
         device_class=None,
@@ -194,29 +194,7 @@ main_sensors = [
     ),
     SensorConfig(
         name="RuecklaufMischer_Temperatur",
-        rect=(719, 456, 54, 18),
-        parser_type="float",
-        unit="°C",
-        device_class="temperature",
-        state_class="measurement",
-        icon="mdi:pipe-valve",
-        min_value=10,
-        max_value=99,
-    ),
-    SensorConfig(
-        name="RuecklaufMischer_Temperatur",
-        rect=(719, 456, 54, 18),
-        parser_type="float",
-        unit="°C",
-        device_class="temperature",
-        state_class="measurement",
-        icon="mdi:pipe-valve",
-        min_value=10,
-        max_value=99,
-    ),
-    SensorConfig(
-        name="RuecklaufMischer_Temperatur",
-        rect=(719, 456, 54, 18),
+        rect=(719, 456, 54, 19),
         parser_type="float",
         unit="°C",
         device_class="temperature",
@@ -279,7 +257,7 @@ boiler_sensors = [
     ),
     SensorConfig(
         name="BoilerMitte_Temperatur",
-        rect=(244, 357, 52, 19),
+        rect=(244, 357, 52, 20),
         parser_type="float",
         unit="°C",
         device_class="temperature",
@@ -290,7 +268,7 @@ boiler_sensors = [
     ),
     SensorConfig(
         name="BoilerOben_Temperatur",
-        rect=(244, 282, 52, 19),
+        rect=(244, 282, 52, 20),
         parser_type="float",
         unit="°C",
         device_class="temperature",
@@ -348,36 +326,41 @@ sollwerte = SensorConfig("sollwerte", (405, 509, 89, 39), "text")
 # ----------------------------------------------------------------------
 # PARSING FUNCTIONS
 # ----------------------------------------------------------------------
-def parse_text(value):
+def parse_text(value, name=""):
     return str(value).strip()
 
 
-def parse_float(value):
+def parse_float(value, name=""):
     try:
         # cleaned = value.strip(" |°%mAkV")
         cleaned = value.replace(",", ".").strip()
-        cleaned = cleaned.replace(",", ".")
         if cleaned.count(".") < 1:
-            cleaned = cleaned[:-1] + "." + cleaned[-1]
+            logger.warning(
+                f"Float with no decimal point: '{cleaned}' for sensor '{name}'"
+            )
+            # cleaned = cleaned[:-1] + "." + cleaned[-1]
         return float(cleaned)
-    except:
+    except Exception as e:
+        logger.warning(f"Float parse error: '{value}' -> {e} for sensor '{name}'")
         return None
 
 
-def parse_int(value):
+def parse_int(value, name=""):
     try:
         cleaned = value.replace(",", ".").strip()
-        return float(cleaned)
-    except:
+        return int(cleaned)
+    except Exception as e:
+        logger.warning(f"Int parse error: '{value}' -> {e} for sensor '{name}'")
         return None
 
 
-def parse_datetime(value):
+def parse_datetime(value, name=""):
     try:
         cleaned = value.strip()
         dt = datetime.datetime.strptime(cleaned, "%d.%m.%Y %H:%M:%S")
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except:
+    except Exception as e:
+        logger.warning(f"Datetime parse error: '{value}' -> {e} for sensor '{name}'")
         return None
 
 
@@ -399,7 +382,7 @@ def parse_value(raw_text, config):
     }
     parser = parsers.get(parser_type, parse_text)
 
-    result = parser(raw_text)
+    result = parser(raw_text, name=config.name)
 
     if result is None:
         logger.warning(

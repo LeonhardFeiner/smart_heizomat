@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Tuple, Optional
 import datetime
+import sys
 
 # ----------------------------------------------------------------------
 # Config
@@ -36,6 +37,10 @@ MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
 PUBLISH_INTERVAL = float(os.environ.get("PUBLISH_INTERVAL", "10"))
 HA_DISCOVERY_PREFIX = "homeassistant"
+CAPTURE_TIMEOUT = int(os.environ.get("CAPTURE_TIMEOUT", "30"))
+OCR_TIMEOUT = float(os.environ.get("OCR_TIMEOUT", "20"))
+WATCHDOG_MAX_FAILURES = int(os.environ.get("WATCHDOG_MAX_FAILURES", "5"))
+WATCHDOG_MIN_VALID_FRAC = float(os.environ.get("WATCHDOG_MIN_VALID_FRAC", "0.6"))
 
 if not URL:
     raise ValueError("URL environment variable required")
@@ -287,6 +292,8 @@ boiler_sensors = [
         device_class="temperature",
         state_class="measurement",
         icon="mdi:thermometer",
+        min_value=-30,
+        max_value=50,
     ),
     SensorConfig(
         name="Sensor_Durschnittstemperatur",
@@ -296,6 +303,8 @@ boiler_sensors = [
         device_class="temperature",
         state_class="measurement",
         icon="mdi:thermometer",
+        min_value=-30,
+        max_value=50,
     ),
     SensorConfig(
         name="Heizkreis_1",
@@ -325,6 +334,14 @@ boiler_sensors = [
 sollwerte = SensorConfig("sollwerte", (405, 509, 89, 39), "text")
 
 last_values = {}
+
+# compute expected sensor counts for watchdog quality checks
+try:
+    total_sensors = len(list(chain(main_sensors, boiler_sensors)))
+except Exception:
+    total_sensors = 0
+
+WATCHDOG_MIN_VALID = max(1, int(total_sensors * WATCHDOG_MIN_VALID_FRAC))
 
 
 # ----------------------------------------------------------------------
@@ -400,12 +417,16 @@ def parse_value(raw_text, config):
                 f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
                 f" below min {config.min_value} for sensor '{config.name}'"
             )
-            if last_values.get(config.name) is not None:
+            if config.min_value < 0:
+                result = None
+            elif last_values.get(config.name) is not None:
                 while result * 1.75 < last_values[config.name]:
                     result *= 10
                 if not result * 0.75 < last_values[config.name]:
                     result = None
                 logger.warning(f"Corrected value {result} for sensor '{config.name}'")
+            else:
+                result = None
 
     if result is not None and config.max_value is not None:
         if result > config.max_value:
@@ -419,6 +440,8 @@ def parse_value(raw_text, config):
                 if not result * 1.25 > last_values[config.name]:
                     result = None
                 logger.warning(f"Corrected value {result} for sensor '{config.name}'")
+            else:
+                result = None
 
     if result is not None:
         last_values[config.name] = result
@@ -471,7 +494,9 @@ def capture_heizomat_parallel(screenshot1_path, screenshot2_path):
     imgs = [Image.open(screenshot1_path), Image.open(screenshot2_path)]
     suffix_img_dict_list = get_associations(imgs)
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    # Limit workers so we don't spawn too many OCR threads on the Pi
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+    try:
         futures = {
             f"{sensor_config.name}{suffix}": executor.submit(
                 crop_and_ocr, img, sensor_config
@@ -479,7 +504,35 @@ def capture_heizomat_parallel(screenshot1_path, screenshot2_path):
             for img, (sensor_list, suffix) in zip(imgs, suffix_img_dict_list)
             for sensor_config in sensor_list
         }
-        return {key: future.result() for key, future in sorted(futures.items())}
+
+        results = {}
+        for key, future in sorted(futures.items()):
+            try:
+                # Protect against OCR hangs on a single sensor blocking the whole loop
+                results[key] = future.result(timeout=OCR_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                logger.error(
+                    f"⏱️ OCR timeout after {OCR_TIMEOUT}s for sensor '{key}'"
+                )
+                results[key] = None
+            except Exception as e:
+                logger.error(f"❌ OCR error for sensor '{key}': {e}")
+                results[key] = None
+
+        # If everything timed out or failed, signal an overall failure
+        if all(v is None for v in results.values()):
+            logger.error(
+                "🚨 All OCR tasks failed or timed out in this cycle — returning empty values"
+            )
+            return {}
+
+        return results
+    finally:
+        # Do not block waiting for stuck OCR threads; let them die in the background
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
 
 
 # ----------------------------------------------------------------------
@@ -489,11 +542,48 @@ def read_values():
     x, y = 649, 528
 
     logger.debug("📸 Capturing...")
-    subprocess.run(
-        ["python3", "capture_screenshot_script.py", "double", URL, str(x), str(y)],
-        check=True,
-        capture_output=True,
-    )
+    # ensure stale chromium children are not lingering
+    try:
+        subprocess.run(["pkill", "-f", "chromium"], check=False)
+    except Exception:
+        logger.debug("Could not pkill chromium (maybe not installed)")
+
+    try:
+        res = subprocess.run(
+            ["python3", "capture_screenshot_script.py", "double", str(URL), str(x), str(y)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=CAPTURE_TIMEOUT,
+        )
+        if res.stdout:
+            logger.debug(f"capture stdout: {res.stdout}")
+        if res.stderr:
+            logger.warning(f"capture stderr: {res.stderr}")
+    except subprocess.TimeoutExpired as e:
+        logger.error(f"❌ Capture timed out after {CAPTURE_TIMEOUT}s: {e}")
+        try:
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+        except Exception:
+            pass
+        reap_zombies()
+        return {}
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Capture subprocess failed: {e}; stdout={e.stdout}; stderr={e.stderr}")
+        try:
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+        except Exception:
+            pass
+        reap_zombies()
+        return {}
+    except Exception as e:
+        logger.exception(f"❌ Unexpected capture error: {e}")
+        try:
+            subprocess.run(["pkill", "-f", "chromium"], check=False)
+        except Exception:
+            pass
+        reap_zombies()
+        return {}
 
     try:
         values = capture_heizomat_parallel("screenshot1.png", "screenshot2.png")
@@ -501,12 +591,30 @@ def read_values():
         for path in ["screenshot1.png", "screenshot2.png"]:
             if os.path.exists(path):
                 os.remove(path)
+        # reap any finished child processes to avoid defunct chromium entries
+        reap_zombies()
 
         logger.info(f"✅ OCR: {len(values)} values")
         return values
     except Exception as e:
         logger.error(f"❌ Capture failed: {e}")
         return {}
+
+
+def reap_zombies():
+    """Try to reap any zombie child processes."""
+    try:
+        while True:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+            if pid == 0:
+                break
+            logger.info(f"♻️ Reaped child process {pid}")
+    except ChildProcessError:
+        # no child processes
+        return
+    except OSError as e:
+        logger.debug(f"reap_zombies OSError: {e}")
+        return
 
 
 def state_topic(key: str) -> str:
@@ -596,13 +704,14 @@ logger.info("✅ MQTT ready")
 if __name__ == "__main__":
     time.sleep(3)
     logger.info(f"⏰ Main loop ({PUBLISH_INTERVAL}s)")
+    # Simple watchdog: exit process after N consecutive empty captures so Docker can restart it
+    consecutive_failures = 0
 
     while True:
         try:
             # read OCR values
             values = read_values()
             values["timestamp"] = time.time()
-
             if mqtt_connected and mqtt_client and values:
                 # publish each sensor individually
                 payload = json.dumps(values)
@@ -610,9 +719,30 @@ if __name__ == "__main__":
                 logger.info(
                     f"📤 Published {len(values)} individual sensors → {MQTT_TOPIC}/"
                 )
+                # reset watchdog on success
+                consecutive_failures = 0
 
             else:
                 logger.warning("⏳ No MQTT connection or no values to publish")
+                # consider this a failure if no values were returned
+                if not values:
+                    consecutive_failures += 1
+                    logger.warning(f"⚠️ Consecutive empty captures: {consecutive_failures}/{WATCHDOG_MAX_FAILURES}")
+                else:
+                    # if MQTT disconnected but we have values, don't increment watchdog
+                    consecutive_failures = 0
+
+            if consecutive_failures >= WATCHDOG_MAX_FAILURES:
+                logger.error(
+                    f"🚨 Watchdog triggered: {consecutive_failures} consecutive failures — exiting to allow container restart"
+                )
+                # ensure MQTT loop stops cleanly before exit
+                try:
+                    mqtt_client.loop_stop()
+                    mqtt_client.disconnect()
+                except Exception:
+                    pass
+                sys.exit(1)
 
         except KeyboardInterrupt:
             logger.info("🛑 Graceful shutdown")

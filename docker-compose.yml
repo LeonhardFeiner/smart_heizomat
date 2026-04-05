@@ -1,6 +1,6 @@
 services:
   novnc:
-    build: ./novnc_arm_dotcurser
+    build: ./novnc_arm_dotcursor
     container_name: novnc
     network_mode: "host"
     environment:

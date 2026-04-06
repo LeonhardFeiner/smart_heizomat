@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Tuple
 import datetime
 import sys
+import shutil
 
 # ----------------------------------------------------------------------
 # Config
@@ -317,6 +318,8 @@ boiler_sensors = [
     ),
 ]
 
+sensor_dict = {"main": main_sensors, "boiler": boiler_sensors}
+
 # Detection sensor: Check if "Sollwerte" text exists at this spot
 sollwerte_indicator = SensorConfig("sollwerte", (405, 436, 89, 39), "text")
 
@@ -505,52 +508,54 @@ def vnc_cmd(actions: list):
 
 
 def capture_hmi():
-    # 0. Cleanup
-    for f in ["_main.png", "_boiler.png", "screenshot.png"]:
-        if os.path.exists(f):
-            os.remove(f)
-
     # 1. Capture first screen
-    if not vnc_cmd(["capture", "screenshot.png"]):
-        return False
-
-    img = cv2.imread("screenshot.png")
-    if img is None:
-        return False
-
-    # 2. Color Check (Uses OpenCV logic already in your script)
-    if not is_area_grey(img, (580, 0, 20, 35)):
-        logger.info("⏸️ HMI State: Red/Green detected. Skipping cycle.")
+    if not vnc_cmd(["capture", "screenshot1.png"]):
         return None
 
-    # 3. Identify and Label Page 1
-    # Note: We pass the cv2 image 'img' to OCR now
-    check_text = crop_and_ocr(img, sollwerte_indicator)
-    is_img1_boiler = check_text and "soll" in str(check_text).lower()
+    if DEBUG_OCR:
+        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
 
-    if is_img1_boiler:
-        os.rename("screenshot.png", "_boiler.png")
-    else:
-        os.rename("screenshot.png", "_main.png")
+    img1 = cv2.imread("screenshot1.png")
+    if img1 is None:
+        return None
 
-    # 4. Page Flip
+    # 2. Color Check (is it in a state we can read?)
+    if not is_area_grey(img1, (580, 0, 20, 35)):
+        logger.info("⏸️ HMI State: Red/Green detected. Skipping cycle.")
+        if DEBUG_OCR:
+            shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_non_grey.png"))
+        return {}
+
+    # 3. Identify if img1 is Boiler or Main page
+    check_val = crop_and_ocr(img1, sollwerte_indicator)
+    is_img1_boiler = check_val and "soll" in str(check_val).lower()
+
+    # 4. Flip to the other page
     if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
-        return False
-    time.sleep(0.6)
+        return None
+    time.sleep(0.6)  # Wait for HMI UI transition
 
     # 5. Capture second screen
-    if not vnc_cmd(["capture", "screenshot.png"]):
-        return False
+    if not vnc_cmd(["capture", "screenshot2.png"]):
+        return None
 
-    # 6. Rename based on first result
+    img2 = cv2.imread("screenshot2.png")
+    if img2 is None:
+        return None
+
+    if DEBUG_OCR:
+        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
+
+    # 6. Map the arrays to the correct keys
     if is_img1_boiler:
-        os.rename("screenshot.png", "_main.png")
+        screens = {"main": img2, "boiler": img1}
     else:
-        os.rename("screenshot.png", "_boiler.png")
+        screens = {"main": img1, "boiler": img2}
 
-    # 7. Return to original state
+    # 7. Return to original page (flip back)
     vnc_cmd(["mousemove", "649", "455", "click", "1"])
-    return True
+
+    return screens
 
 
 # ----------------------------------------------------------------------
@@ -569,7 +574,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 def send_ha_discovery(client):
     logger.info("📡 Sending HA Discovery...")
-    for sensor in chain(main_sensors, boiler_sensors):
+    for sensor in chain.from_iterable(sensor_dict.values()):
         obj_id = sensor.name.lower()
         topic = f"{HA_DISCOVERY_PREFIX}/sensor/heizomat/{obj_id}/config"
         config = {
@@ -614,28 +619,20 @@ if __name__ == "__main__":
     consecutive_failures = 0
 
     while True:
-        cycle_start = time.time()  # Start the "stopwatch"
+        cycle_start = time.time()
 
-        status = capture_hmi()
-        if status is None:
-            # Soft failure (color check failed) - do not increment watchdog
-            pass
-        elif status:
+        screens = capture_hmi()  # Returns dict or None
+
+        if screens:
             try:
-                # We now know exactly which file is which
-                img_main = cv2.imread("_main.png")
-                img_boiler = cv2.imread("_boiler.png")
-
-                mapping = [(main_sensors, img_main), (boiler_sensors, img_boiler)]
-
                 final_data = {}
 
-                # Use a dictionary to track which sensor goes with which future
                 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                     future_to_sensor = {}
-                    for sensors, img in mapping:
+                    for name, img in screens.items():
+                        sensors = sensor_dict[name]
                         for s in sensors:
-                            # Submit the OCR task
+                            # img is now the numpy array from our dict
                             future = executor.submit(crop_and_ocr, img, s)
                             future_to_sensor[future] = s.name
 
@@ -646,9 +643,7 @@ if __name__ == "__main__":
                             if val is not None:
                                 final_data[sensor_name] = val
                         except Exception as exc:
-                            logger.error(
-                                f"❌ Sensor '{sensor_name}' generated an exception: {exc}"
-                            )
+                            logger.error(f"❌ Sensor '{sensor_name}' exception: {exc}")
 
                 # Summary Logging
                 total_expected = len(main_sensors) + len(boiler_sensors)
@@ -676,7 +671,7 @@ if __name__ == "__main__":
             except Exception as e:
                 logger.error(f"Processing error: {e}")
                 consecutive_failures += 1
-        else:
+        elif screens is None:  # Explicit failure, not a skip
             consecutive_failures += 1
 
         if consecutive_failures >= WATCHDOG_MAX_FAILURES:

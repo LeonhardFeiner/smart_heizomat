@@ -92,7 +92,7 @@ main_sensors = [
     ),
     SensorConfig(
         "Hackgut_P",
-        (208, 265, 41, 19),
+        (207, 264, 44, 20),
         "int",
         unit="%",
         device_class=None,
@@ -103,7 +103,7 @@ main_sensors = [
     ),
     SensorConfig(
         "Hackgut_S",
-        (207, 235, 44, 19),
+        (207, 234, 44, 20),
         "int",
         unit="%",
         device_class=None,
@@ -318,7 +318,70 @@ boiler_sensors = [
     ),
 ]
 
-sensor_dict = {"main": main_sensors, "boiler": boiler_sensors}
+setpoint_sensors = [
+    SensorConfig(
+        "Soll_BoilerMitte_Temperatur",
+        (244, 284, 52, 20),
+        "float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        "Soll_BoilerOben_Temperatur",
+        (244, 209, 52, 20),
+        "float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:thermometer",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        "Soll_Heizkreis_1",
+        (368, 205, 54, 20),
+        "float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:radiator",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        "Soll_Heizkreis_2",
+        (448, 205, 54, 20),
+        "float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:radiator",
+        min_value=10,
+        max_value=99,
+    ),
+    SensorConfig(
+        "Soll_RuecklaufMischer_Temperatur",
+        (12, 337, 54, 21),
+        "float",
+        unit="°C",
+        device_class="temperature",
+        state_class="measurement",
+        icon="mdi:pipe-valve",
+        min_value=10,
+        max_value=99,
+    ),
+]
+
+
+sensor_dict = {
+    "main": main_sensors,
+    "boiler": boiler_sensors,
+    "setpoint": setpoint_sensors,
+}
 
 # Detection sensor: Check if "Sollwerte" text exists at this spot
 sollwerte_indicator = SensorConfig("_sollwerte", (405, 436, 89, 39), "text")
@@ -458,7 +521,7 @@ def crop_and_ocr(cv_img, sensor_config: SensorConfig):
     return parse_value(raw_text, sensor_config)
 
 
-def is_area_grey(img, rect):
+def is_area_grey(img, rect=(580, 0, 20, 35)):
     """Checks if the area (x, y, w, h) in the image is Grey."""
     x, y, w, h = rect
 
@@ -507,55 +570,121 @@ def vnc_cmd(actions: list):
         return False
 
 
-def capture_hmi():
-    # 1. Capture first screen
-    if not vnc_cmd(["capture", "screenshot1.png"]):
+def capture(filename):
+    """Performs a simple screen capture and returns the CV2 image object."""
+    if not vnc_cmd(["capture", filename]):
+        logger.error(f"❌ Failed to capture {filename}")
+        return None
+
+    img = cv2.imread(filename)
+    if img is None:
+        logger.error(f"❌ Failed to read {filename} from disk")
         return None
 
     if DEBUG_OCR:
-        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
+        shutil.copy(filename, os.path.join(DEBUG_DIR, f"_{filename}"))
 
-    img1 = cv2.imread("screenshot1.png")
-    if img1 is None:
+    return img
+
+
+def capture_hold_sollwerte(filename="setpoint.png"):
+    """Moves to the Sollwerte button, presses down, captures, and releases."""
+    # Coordinates for the 'Sollwerte' / Page Flip button
+    x, y = 450, 455
+
+    # Sequence: Move -> Press -> Wait 100ms -> Screenshot -> Release
+    action_sequence = [
+        "mousemove",
+        str(x),
+        str(y),
+        "mousedown",
+        "1",
+        "pause",
+        "0.5",
+        "capture",
+        filename,
+        "mouseup",
+        "1",
+    ]
+
+    if not vnc_cmd(action_sequence):
+        logger.error(f"❌ Failed to execute touch-capture for {filename}")
         return None
 
-    # 2. Color Check (is it in a state we can read?)
-    if not is_area_grey(img1, (580, 0, 20, 35)):
+    img = cv2.imread(filename)
+    if img is None:
+        return None
+
+    if DEBUG_OCR:
+        shutil.copy(filename, os.path.join(DEBUG_DIR, f"_touch_{filename}"))
+
+    # Give the HMI a moment to actually switch the page internally after mouseup
+    time.sleep(0.5)
+
+    return img
+
+
+def check_sollwerte_page(img):
+    # 3. Identify if img1 is Boiler or Main page
+    check_val = crop_and_ocr(img, sollwerte_indicator)
+    return check_val and "soll" in str(check_val).lower()
+
+
+def toggle_page():
+    """Toggles between the main and boiler pages by clicking the 'Sollwerte' button."""
+    if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
+        logger.error("❌ Failed to switch page via VNC")
+        return False
+    time.sleep(0.6)  # Wait for HMI UI transition
+    return True
+
+
+def capture_current_page(filename):
+    img = capture(filename)
+    result_dict = {}
+    if img is None:
+        return None
+
+    if not is_area_grey(img):
         logger.info("⏸️ HMI State: Red/Green detected. Skipping cycle.")
         if DEBUG_OCR:
-            shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_non_grey.png"))
+            shutil.copy(
+                filename,
+                os.path.join(DEBUG_DIR, "_non_grey.png"),
+            )
         return {}
 
-    # 3. Identify if img1 is Boiler or Main page
-    check_val = crop_and_ocr(img1, sollwerte_indicator)
-    is_img1_boiler = check_val and "soll" in str(check_val).lower()
+    if check_sollwerte_page(img):
+        new_name = "boiler"
+        result_dict["setpoint"] = capture_hold_sollwerte()
+    else:
+        new_name = "main"
 
-    # 4. Flip to the other page
-    if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
-        return None
-    time.sleep(0.6)  # Wait for HMI UI transition
-
-    # 5. Capture second screen
-    if not vnc_cmd(["capture", "screenshot2.png"]):
-        return None
-
-    img2 = cv2.imread("screenshot2.png")
-    if img2 is None:
-        return None
+    result_dict[new_name] = img
 
     if DEBUG_OCR:
-        shutil.copy("screenshot2.png", os.path.join(DEBUG_DIR, "_screenshot2.png"))
+        shutil.copy(
+            filename,
+            os.path.join(DEBUG_DIR, f"_{new_name}.png"),
+        )
 
-    # 6. Map the arrays to the correct keys
-    if is_img1_boiler:
-        screens = {"main": img2, "boiler": img1}
-    else:
-        screens = {"main": img1, "boiler": img2}
+    return result_dict
 
-    # 7. Return to original page (flip back)
-    vnc_cmd(["mousemove", "649", "455", "click", "1"])
 
-    return screens
+def capture_hmi():
+    result_dict = {}
+
+    result_dict = capture_current_page("screenshot1.png")
+    if result_dict is None:
+        return None
+    toggle_page()
+    result = capture_current_page("screenshot2.png")
+    if result is None:
+        return None
+    result_dict.update(result)
+    toggle_page()
+
+    return result_dict
 
 
 # ----------------------------------------------------------------------

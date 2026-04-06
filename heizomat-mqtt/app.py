@@ -6,7 +6,6 @@ Direct coordinate mapping for raw VNC (800x480)
 
 from itertools import chain
 import subprocess
-from PIL import Image
 import cv2
 import numpy as np
 import pytesseract
@@ -413,32 +412,37 @@ def parse_value(raw_text, config):
 # ----------------------------------------------------------------------
 # OCR ENGINE
 # ----------------------------------------------------------------------
-def preprocess_image_for_ocr(pil_img, rect, sensor_name="unknown"):
+def preprocess_image_for_ocr(cv_img, rect, sensor_name="unknown"):
     x, y, w, h = rect
-    cropped = pil_img.crop((x, y, x + w, y + h))
 
-    # Save the raw crop if debug is on
+    # OpenCV Cropping: [y1:y2, x1:x2]
+    cropped = cv_img[y : y + h, x : x + w]
+
     if DEBUG_OCR:
-        debug_path = os.path.join(DEBUG_DIR, f"{sensor_name}.png")
-        cropped.save(debug_path)
+        cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}.png"), cropped)
 
-    # Process for OCR
-    img = np.array(cropped.convert("L"))
-    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # 1. Convert to Grayscale
+    gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
-    # If debug is on, save the "processed" (black/white) version too
+    # 2. Upscale 2x (Linear interpolation works well for OCR)
+    upscaled = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+
+    # 3. Thresholding (Otsu's Binarization)
+    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # 4. Invert if mostly black (we want black text on white background)
+    if np.mean(thresh) < 127:
+        thresh = cv2.bitwise_not(thresh)
+
     if DEBUG_OCR:
-        processed_path = os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png")
-        cv2.imwrite(processed_path, img)
+        cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png"), thresh)
 
-    if img.mean() < 127:
-        img = cv2.bitwise_not(img)
-    return Image.fromarray(img)
+    return thresh
 
 
-def crop_and_ocr(image, sensor_config: SensorConfig):
-    preprocessed = preprocess_image_for_ocr(
-        image, sensor_config.rect, sensor_config.name
+def crop_and_ocr(cv_img, sensor_config: SensorConfig):
+    processed_img = preprocess_image_for_ocr(
+        cv_img, sensor_config.rect, sensor_config.name
     )
     whitelist = tessedit_char_whitelist.get(sensor_config.parser_type)
     tess_config = f"--psm {sensor_config.page_segmentation_mode} --oem 3"
@@ -446,17 +450,15 @@ def crop_and_ocr(image, sensor_config: SensorConfig):
         tess_config += f" -c tessedit_char_whitelist={whitelist}"
 
     raw_text = pytesseract.image_to_string(
-        preprocessed, "deu", config=tess_config
+        processed_img, lang="deu", config=tess_config
     ).strip()
     return parse_value(raw_text, sensor_config)
 
 
-def is_area_grey(img_path, rect):
+def is_area_grey(img, rect):
     """Checks if the area (x, y, w, h) in the image is Grey."""
     x, y, w, h = rect
 
-    # Load image and crop
-    img = cv2.imread(img_path)
     if img is None:
         return False
 
@@ -471,7 +473,7 @@ def is_area_grey(img_path, rect):
 
     if DEBUG_OCR:
         # Save the color-check crop so you can see what it's looking at
-        cv2.imwrite(os.path.join(DEBUG_DIR, "COLOR_CHECK_AREA.png"), crop)
+        cv2.imwrite(os.path.join(DEBUG_DIR, "_color_check.png"), crop)
         logger.info(
             f"🎨 Color Check: Avg Saturation={avg_saturation:.2f}, Avg Value={avg_value:.2f}"
         )
@@ -503,34 +505,50 @@ def vnc_cmd(actions: list):
 
 
 def capture_hmi():
+    # 0. Cleanup
+    for f in ["_main.png", "_boiler.png", "screenshot.png"]:
+        if os.path.exists(f):
+            os.remove(f)
+
     # 1. Capture first screen
-    if not vnc_cmd(["capture", "screenshot1.png"]):
+    if not vnc_cmd(["capture", "screenshot.png"]):
         return False
 
-    # 2. PERFORM THE COLOR CHECK
-    # Area: x=580, y=0, w=20, h=35
-    if not is_area_grey("screenshot1.png", (580, 0, 20, 35)):
-        logger.info("⏸️ HMI State: Red/Green detected. Skipping this cycle (No error).")
-        return None  # Soft "failure" - do not increment watchdog
+    img = cv2.imread("screenshot.png")
+    if img is None:
+        return False
 
-    # 3. Move to coordinates and THEN click button 1
-    # Format: mousemove X Y click 1
+    # 2. Color Check (Uses OpenCV logic already in your script)
+    if not is_area_grey(img, (580, 0, 20, 35)):
+        logger.info("⏸️ HMI State: Red/Green detected. Skipping cycle.")
+        return None
+
+    # 3. Identify and Label Page 1
+    # Note: We pass the cv2 image 'img' to OCR now
+    check_text = crop_and_ocr(img, sollwerte_indicator)
+    is_img1_boiler = check_text and "soll" in str(check_text).lower()
+
+    if is_img1_boiler:
+        os.rename("screenshot.png", "_boiler.png")
+    else:
+        os.rename("screenshot.png", "_main.png")
+
+    # 4. Page Flip
     if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
         return False
+    time.sleep(0.6)
 
-    # time.sleep(1.5)  # Wait for page flip
-
-    # 4. Capture second screen
-    if not vnc_cmd(["capture", "screenshot2.png"]):
+    # 5. Capture second screen
+    if not vnc_cmd(["capture", "screenshot.png"]):
         return False
 
-    if DEBUG_OCR:
-        import shutil
+    # 6. Rename based on first result
+    if is_img1_boiler:
+        os.rename("screenshot.png", "_main.png")
+    else:
+        os.rename("screenshot.png", "_boiler.png")
 
-        # Save them with fixed names so they are easy to find in the volume
-        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
-        shutil.copy("screenshot2.png", os.path.join(DEBUG_DIR, "_screenshot2.png"))
-
+    # 7. Return to original state
     vnc_cmd(["mousemove", "649", "455", "click", "1"])
     return True
 
@@ -596,24 +614,19 @@ if __name__ == "__main__":
     consecutive_failures = 0
 
     while True:
+        cycle_start = time.time()  # Start the "stopwatch"
+
         status = capture_hmi()
         if status is None:
-            logger.info(
-                "⏸️ Skipping data extraction due to HMI state (Red/Green detected)."
-            )
             # Soft failure (color check failed) - do not increment watchdog
-            continue
+            pass
         elif status:
             try:
-                img1 = Image.open("screenshot1.png")
-                img2 = Image.open("screenshot2.png")
+                # We now know exactly which file is which
+                img_main = cv2.imread("_main.png")
+                img_boiler = cv2.imread("_boiler.png")
 
-                # Detect which image is which
-                check_text = crop_and_ocr(img1, sollwerte_indicator)
-                if check_text and "soll" in str(check_text).lower():
-                    mapping = [(boiler_sensors, img1), (main_sensors, img2)]
-                else:
-                    mapping = [(main_sensors, img1), (boiler_sensors, img2)]
+                mapping = [(main_sensors, img_main), (boiler_sensors, img_boiler)]
 
                 final_data = {}
 
@@ -663,10 +676,6 @@ if __name__ == "__main__":
             except Exception as e:
                 logger.error(f"Processing error: {e}")
                 consecutive_failures += 1
-            finally:
-                for p in ["screenshot1.png", "screenshot2.png"]:
-                    if os.path.exists(p):
-                        os.remove(p)
         else:
             consecutive_failures += 1
 
@@ -674,4 +683,13 @@ if __name__ == "__main__":
             logger.error("🚨 Watchdog failure limit reached. Restarting...")
             sys.exit(1)
 
-        time.sleep(PUBLISH_INTERVAL)
+        # --- SYNC TIMING LOGIC ---
+        elapsed = time.time() - cycle_start
+        sleep_time = max(0, PUBLISH_INTERVAL - elapsed)
+
+        if sleep_time == 0:
+            logger.warning(
+                f"⏰ Cycle took longer ({elapsed:.1f}s) than interval ({PUBLISH_INTERVAL}s)!"
+            )
+
+        time.sleep(sleep_time)

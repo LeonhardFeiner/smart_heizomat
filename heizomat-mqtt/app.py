@@ -446,7 +446,9 @@ def parse_value(raw_text, config):
     }
 
     if not raw_text or raw_text.strip() == "":
-        logger.warning(f"⚠️ Sensor '{config.name}': OCR returned empty text")
+        logger.warning(
+            f"⚠️ Sensor '{config.name}': OCR returned empty text: '{raw_text}'"
+        )
         return None
 
     parser = parsers.get(config.parser_type, parse_text)
@@ -487,37 +489,40 @@ def preprocess_image_for_ocr(cv_img, rect, sensor_name="unknown"):
     if DEBUG_OCR:
         cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}.png"), cropped)
 
-    # 1. Convert to Grayscale
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
-    # 2. Upscale 2x (Linear interpolation works well for OCR)
-    upscaled = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # 3. Thresholding (Otsu's Binarization)
-    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # 4. Invert if mostly black (we want black text on white background)
     if np.mean(thresh) < 127:
         thresh = cv2.bitwise_not(thresh)
 
-    if DEBUG_OCR:
-        cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png"), thresh)
+    upscaled = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_LINEAR)
+    boardered = cv2.copyMakeBorder(upscaled, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=255)
 
-    return thresh
+    if DEBUG_OCR:
+        cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png"), boardered)
+
+    return boardered
+
+
+def ocr(img, page_segmentation_mode, whitelist=None, *, oem=3, lang="deu"):
+    tess_config = f"--psm {page_segmentation_mode} --oem {oem}"
+    if whitelist:
+        tess_config += f" -c tessedit_char_whitelist={whitelist}"
+
+    return pytesseract.image_to_string(img, lang=lang, config=tess_config).strip()
 
 
 def crop_and_ocr(cv_img, sensor_config: SensorConfig):
     processed_img = preprocess_image_for_ocr(
         cv_img, sensor_config.rect, sensor_config.name
     )
-    whitelist = tessedit_char_whitelist.get(sensor_config.parser_type)
-    tess_config = f"--psm {sensor_config.page_segmentation_mode} --oem 3"
-    if whitelist:
-        tess_config += f" -c tessedit_char_whitelist={whitelist}"
 
-    raw_text = pytesseract.image_to_string(
-        processed_img, lang="deu", config=tess_config
-    ).strip()
+    raw_text = ocr(
+        processed_img,
+        sensor_config.page_segmentation_mode,
+        whitelist=tessedit_char_whitelist.get(sensor_config.parser_type),
+    )
     return parse_value(raw_text, sensor_config)
 
 
@@ -566,7 +571,7 @@ def vnc_cmd(actions: list):
         subprocess.run(base + actions, check=True, capture_output=True, timeout=15)
         return True
     except Exception as e:
-        logger.error(f"VNC Error: {e}")
+        logger.error(f"VNC Error: {e}, Command: {' '.join(base + actions)}")
         return False
 
 

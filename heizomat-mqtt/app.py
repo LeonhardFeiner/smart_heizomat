@@ -321,7 +321,7 @@ boiler_sensors = [
 sensor_dict = {"main": main_sensors, "boiler": boiler_sensors}
 
 # Detection sensor: Check if "Sollwerte" text exists at this spot
-sollwerte_indicator = SensorConfig("sollwerte", (405, 436, 89, 39), "text")
+sollwerte_indicator = SensorConfig("_sollwerte", (405, 436, 89, 39), "text")
 
 # Global state
 last_values = {}
@@ -544,7 +544,7 @@ def capture_hmi():
         return None
 
     if DEBUG_OCR:
-        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
+        shutil.copy("screenshot2.png", os.path.join(DEBUG_DIR, "_screenshot2.png"))
 
     # 6. Map the arrays to the correct keys
     if is_img1_boiler:

@@ -25,6 +25,7 @@ services:
     container_name: heizomat-mqtt
     network_mode: "host"
     environment:
+      - TZ=Europe/Berlin
       - MQTT_BROKER_HOST=
       - MQTT_BROKER_PORT=1883
       - MQTT_TOPIC=heizomat/hackschnitzel

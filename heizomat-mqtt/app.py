@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Heizomat MQTT Monitor v4.0 - DATACLASS Edition
-Single source of truth for all sensors + HA Auto-Discovery
+Heizomat MQTT Monitor v5.0 - VNC DIRECT Edition
+Direct coordinate mapping for raw VNC (800x480)
 """
 
 from itertools import chain
@@ -16,9 +16,8 @@ import json
 import time
 import concurrent.futures
 import paho.mqtt.client as mqtt
-import re
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple
 import datetime
 import sys
 
@@ -28,7 +27,8 @@ import sys
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-URL = os.environ.get("URL")
+VNC_ADDRESS = os.environ.get("VNC_ADDRESS")
+VNC_PW = os.environ.get("VNC_PW", "")
 MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "localhost")
 MQTT_BROKER_PORT = int(os.environ.get("MQTT_BROKER_PORT", "1883"))
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "heizomat/values")
@@ -36,28 +36,27 @@ SENSOR_BASENAME = os.environ.get("SENSOR_BASENAME", "heizomat")
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
 PUBLISH_INTERVAL = float(os.environ.get("PUBLISH_INTERVAL", "10"))
+
 HA_DISCOVERY_PREFIX = "homeassistant"
-CAPTURE_TIMEOUT = int(os.environ.get("CAPTURE_TIMEOUT", "30"))
 OCR_TIMEOUT = float(os.environ.get("OCR_TIMEOUT", "20"))
 WATCHDOG_MAX_FAILURES = int(os.environ.get("WATCHDOG_MAX_FAILURES", "5"))
-WATCHDOG_MIN_VALID_FRAC = float(os.environ.get("WATCHDOG_MIN_VALID_FRAC", "0.6"))
+DEBUG_OCR = os.environ.get("DEBUG_OCR", "false").lower() == "true"
+DEBUG_DIR = "/app/debug_crops"
 
-if not URL:
-    raise ValueError("URL environment variable required")
 
-logger.info(f"🚀 Heizomat MQTT v4.0 - Dataclass Edition")
-logger.info(f"📍 URL={URL}")
+if not VNC_ADDRESS:
+    raise ValueError("VNC_ADDRESS environment variable required")
+
+logger.info(f"🚀 Heizomat MQTT v5.0 - VNC DIRECT Edition")
 logger.info(f"📍 MQTT={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+logger.info(f"📍 VNC={VNC_ADDRESS}")
 
 
-# ----------------------------------------------------------------------
-# SINGLE DATACLASS - ALL SENSOR INFO
-# ----------------------------------------------------------------------
 @dataclass
 class SensorConfig:
     name: str
     rect: Tuple[int, int, int, int]  # (x, y, w, h)
-    parser_type: str  # "float", "int", "text"
+    parser_type: str  # "float", "int", "text", "datetime"
     page_segmentation_mode: int = 7
     unit: str | None = None
     device_class: str | None = None
@@ -67,21 +66,23 @@ class SensorConfig:
     max_value: float | int | None = None
 
 
-# MAIN SENSORS
+# ----------------------------------------------------------------------
+# SENSOR DEFINITIONS (Y-Coordinates reduced by 73)
+# ----------------------------------------------------------------------
 main_sensors = [
     SensorConfig(
-        name="Pause",
-        rect=(173, 476, 68, 23),
-        parser_type="float",
+        "Pause",
+        (173, 403, 68, 23),
+        "float",
         unit="s",
         device_class="duration",
         state_class="measurement",
         icon="mdi:pause",
     ),
     SensorConfig(
-        name="Takt",
-        rect=(176, 451, 64, 20),
-        parser_type="float",
+        "Takt",
+        (176, 378, 64, 21),
+        "float",
         unit="s",
         device_class="duration",
         state_class="measurement",
@@ -90,9 +91,9 @@ main_sensors = [
         max_value=30,
     ),
     SensorConfig(
-        name="Hackgut_P",
-        rect=(208, 338, 41, 17),
-        parser_type="int",
+        "Hackgut_P",
+        (208, 265, 41, 19),
+        "int",
         unit="%",
         device_class=None,
         state_class="measurement",
@@ -101,9 +102,9 @@ main_sensors = [
         max_value=100,
     ),
     SensorConfig(
-        name="Hackgut_S",
-        rect=(207, 309, 44, 17),
-        parser_type="int",
+        "Hackgut_S",
+        (207, 235, 44, 19),
+        "int",
         unit="%",
         device_class=None,
         state_class="measurement",
@@ -112,9 +113,9 @@ main_sensors = [
         max_value=100,
     ),
     SensorConfig(
-        name="Abgas_Temperatur",
-        rect=(730, 223, 40, 19),
-        parser_type="int",
+        "Abgas_Temperatur",
+        (730, 150, 40, 19),
+        "int",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -123,9 +124,9 @@ main_sensors = [
         max_value=300,
     ),
     SensorConfig(
-        name="Abgas_Restsauerstoff",
-        rect=(726, 195, 48, 23),
-        parser_type="float",
+        "Abgas_Restsauerstoff",
+        (726, 122, 48, 23),
+        "float",
         unit="%",
         device_class=None,
         state_class="measurement",
@@ -134,9 +135,9 @@ main_sensors = [
         max_value=21,
     ),
     SensorConfig(
-        name="Geblaeseleistung",
-        rect=(555, 195, 48, 23),
-        parser_type="int",
+        "Geblaeseleistung",
+        (555, 122, 48, 23),
+        "int",
         unit="%",
         device_class=None,
         state_class="measurement",
@@ -145,9 +146,9 @@ main_sensors = [
         max_value=100,
     ),
     SensorConfig(
-        name="Partikelabscheider_Strom",
-        rect=(734, 151, 39, 18),
-        parser_type="float",
+        "Partikelabscheider_Strom",
+        (734, 78, 39, 18),
+        "float",
         unit="mA",
         device_class="current",
         state_class="measurement",
@@ -156,9 +157,9 @@ main_sensors = [
         max_value=0.2,
     ),
     SensorConfig(
-        name="Partikelabscheider_Spannung",
-        rect=(654, 151, 39, 18),
-        parser_type="float",
+        "Partikelabscheider_Spannung",
+        (654, 78, 39, 18),
+        "float",
         unit="kV",
         device_class="voltage",
         state_class="measurement",
@@ -167,9 +168,9 @@ main_sensors = [
         max_value=30,
     ),
     SensorConfig(
-        name="Kessel_Solltemperatur",
-        rect=(191, 151, 83, 28),
-        parser_type="int",
+        "Kessel_Solltemperatur",
+        (191, 78, 83, 28),
+        "int",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -178,20 +179,9 @@ main_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="Kessel_Solltemperatur",
-        rect=(191, 151, 83, 28),
-        parser_type="int",
-        unit="°C",
-        device_class="temperature",
-        state_class="measurement",
-        icon="mdi:thermometer-chevron-up",
-        min_value=10,
-        max_value=99,
-    ),
-    SensorConfig(
-        name="Kessel_Temperatur",
-        rect=(192, 114, 81, 31),
-        parser_type="float",
+        "Kessel_Temperatur",
+        (192, 41, 81, 31),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -200,9 +190,9 @@ main_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="RuecklaufMischer_Temperatur",
-        rect=(719, 456, 54, 19),
-        parser_type="float",
+        "RuecklaufMischer_Temperatur",
+        (719, 383, 54, 21),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -211,37 +201,36 @@ main_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="Brennstoff",
-        rect=(8, 217, 264, 21),
-        parser_type="text",
+        "Brennstoff",
+        (8, 144, 264, 21),
+        "text",
         unit=None,
         device_class=None,
         state_class=None,
         icon="mdi:fuel",
     ),
     SensorConfig(
-        name="Betriebszustand",
-        rect=(403, 115, 291, 29),
-        parser_type="text",
+        "Betriebszustand",
+        (403, 42, 291, 31),
+        "text",
         unit=None,
         device_class=None,
         state_class=None,
         icon="mdi:power",
     ),
     SensorConfig(
-        name="Uhrzeit",
-        rect=(302, 74, 196, 31),
-        parser_type="datetime",
-        page_segmentation_mode=7,
+        "Uhrzeit",
+        (302, 1, 196, 31),
+        "datetime",
         unit=None,
         device_class=None,
         state_class=None,
         icon="mdi:clock",
     ),
     SensorConfig(
-        name="Betriebsart",
-        rect=(600, 74, 200, 33),
-        parser_type="text",
+        "Betriebsart",
+        (600, 1, 200, 33),
+        "text",
         unit=None,
         device_class=None,
         state_class=None,
@@ -249,12 +238,11 @@ main_sensors = [
     ),
 ]
 
-# BOILER SENSORS
 boiler_sensors = [
     SensorConfig(
-        name="BoilerUnten_Temperatur",
-        rect=(244, 432, 52, 19),
-        parser_type="float",
+        "BoilerUnten_Temperatur",
+        (244, 359, 52, 20),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -263,9 +251,9 @@ boiler_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="BoilerMitte_Temperatur",
-        rect=(244, 357, 52, 20),
-        parser_type="float",
+        "BoilerMitte_Temperatur",
+        (244, 284, 52, 20),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -274,9 +262,9 @@ boiler_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="BoilerOben_Temperatur",
-        rect=(244, 282, 52, 20),
-        parser_type="float",
+        "BoilerOben_Temperatur",
+        (244, 209, 52, 20),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -285,9 +273,9 @@ boiler_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="Sensor_Temperatur",
-        rect=(37, 152, 41, 16),
-        parser_type="float",
+        "Sensor_Temperatur",
+        (37, 79, 41, 17),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -296,9 +284,9 @@ boiler_sensors = [
         max_value=50,
     ),
     SensorConfig(
-        name="Sensor_Durschnittstemperatur",
-        rect=(37, 177, 41, 16),
-        parser_type="float",
+        "Sensor_Durschnittstemperatur",
+        (37, 104, 41, 17),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -307,9 +295,9 @@ boiler_sensors = [
         max_value=50,
     ),
     SensorConfig(
-        name="Heizkreis_1",
-        rect=(368, 251, 54, 19),
-        parser_type="float",
+        "Heizkreis_1",
+        (368, 178, 54, 20),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -318,9 +306,9 @@ boiler_sensors = [
         max_value=99,
     ),
     SensorConfig(
-        name="Heizkreis_2",
-        rect=(448, 251, 54, 19),
-        parser_type="float",
+        "Heizkreis_2",
+        (448, 178, 54, 20),
+        "float",
         unit="°C",
         device_class="temperature",
         state_class="measurement",
@@ -330,18 +318,18 @@ boiler_sensors = [
     ),
 ]
 
+# Detection sensor: Check if "Sollwerte" text exists at this spot
+sollwerte_indicator = SensorConfig("sollwerte", (405, 436, 89, 39), "text")
 
-sollwerte = SensorConfig("sollwerte", (405, 509, 89, 39), "text")
-
+# Global state
 last_values = {}
-
-# compute expected sensor counts for watchdog quality checks
-try:
-    total_sensors = len(list(chain(main_sensors, boiler_sensors)))
-except Exception:
-    total_sensors = 0
-
-WATCHDOG_MIN_VALID = max(1, int(total_sensors * WATCHDOG_MIN_VALID_FRAC))
+mqtt_connected = False
+tessedit_char_whitelist = {
+    "float": "0123456789,",
+    "int": "0123456789",
+    "str": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄäÖöÜüß0123456789 ,.-",
+    "datetime": "0123456789.: ",
+}
 
 
 # ----------------------------------------------------------------------
@@ -353,404 +341,337 @@ def parse_text(value, name=""):
 
 def parse_float(value, name=""):
     try:
-        # cleaned = value.strip(" |°%mAkV")
         cleaned = value.replace(",", ".").strip()
-        if cleaned.count(".") < 1:
-            logger.warning(
-                f"Float with no decimal point: '{cleaned}' for sensor '{name}'"
-            )
-            # cleaned = cleaned[:-1] + "." + cleaned[-1]
         return float(cleaned)
     except Exception as e:
-        logger.warning(f"Float parse error: '{value}' -> {e} for sensor '{name}'")
+        logger.warning(f"Float parse error: '{value}' for sensor '{name}'")
         return None
 
 
 def parse_int(value, name=""):
     try:
         cleaned = value.replace(",", ".").strip()
-        return int(cleaned)
+        return int(float(cleaned))  # handle case where HMI might show .0
     except Exception as e:
-        logger.warning(f"Int parse error: '{value}' -> {e} for sensor '{name}'")
+        logger.warning(f"Int parse error: '{value}' for sensor '{name}'")
         return None
 
 
 def parse_datetime(value, name=""):
     try:
-        cleaned = value.strip()
+        cleaned = value.strip().replace(" ", "")  # Remove all spaces first
+        # Expected format now: DD.MM.YYYYHH:MM:SS (18 chars)
+        if len(cleaned) == 18:
+            # Re-insert the space where it belongs
+            cleaned = cleaned[:10] + " " + cleaned[10:]
+
         dt = datetime.datetime.strptime(cleaned, "%d.%m.%Y %H:%M:%S")
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception as e:
-        logger.warning(f"Datetime parse error: '{value}' -> {e} for sensor '{name}'")
+    except Exception:
+        logger.warning(f"⏰ Uhrzeit parse failed for: '{value}'")
         return None
 
 
-tessedit_char_whitelist = {
-    "float": "0123456789,",
-    "int": "0123456789",
-    "str": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄäÖöÜüß0123456789 ,.-",
-    # "datetime": "0123456789:. ",
-}
-
-
 def parse_value(raw_text, config):
-    parser_type = config.parser_type
     parsers = {
         "float": parse_float,
         "int": parse_int,
         "text": parse_text,
         "datetime": parse_datetime,
     }
-    parser = parsers.get(parser_type, parse_text)
 
+    if not raw_text or raw_text.strip() == "":
+        logger.warning(f"⚠️ Sensor '{config.name}': OCR returned empty text")
+        return None
+
+    parser = parsers.get(config.parser_type, parse_text)
     result = parser(raw_text, name=config.name)
 
     if result is None:
         logger.warning(
-            f"Could not parse value for parser '{parser_type}': '{raw_text}'"
-            f" for sensor '{config.name}'"
+            f"⚠️ Sensor '{config.name}': Parser failed to convert '{raw_text}'"
         )
+        return None
 
-    if result is not None and config.min_value is not None:
-        if result < config.min_value:
-            logger.warning(
-                f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
-                f" below min {config.min_value} for sensor '{config.name}'"
-            )
-            if config.min_value < 0:
-                result = None
-            elif last_values.get(config.name) is not None:
-                while result * 1.75 < last_values[config.name]:
-                    result *= 10
-                if not result * 0.75 < last_values[config.name]:
-                    result = None
-                logger.warning(f"Corrected value {result} for sensor '{config.name}'")
-            else:
-                result = None
+    # Bounds checking
+    if config.min_value is not None and result < config.min_value:
+        logger.warning(
+            f"📉 Sensor '{config.name}': Value {result} below min {config.min_value} (Raw: '{raw_text}')"
+        )
+        return None
 
-    if result is not None and config.max_value is not None:
-        if result > config.max_value:
-            logger.warning(
-                f"Value {result} for parser '{parser_type}' and raw text '{raw_text}'"
-                f" above max {config.max_value} for sensor '{config.name}'"
-            )
-            if last_values.get(config.name) is not None:
-                while result * 0.75 > last_values[config.name]:
-                    result /= 10
-                if not result * 1.25 > last_values[config.name]:
-                    result = None
-                logger.warning(f"Corrected value {result} for sensor '{config.name}'")
-            else:
-                result = None
+    if config.max_value is not None and result > config.max_value:
+        logger.warning(
+            f"📈 Sensor '{config.name}': Value {result} above max {config.max_value} (Raw: '{raw_text}')"
+        )
+        return None
 
-    if result is not None:
-        last_values[config.name] = result
-
-    return result  # if result is not None else raw_text
+    last_values[config.name] = result
+    return result
 
 
 # ----------------------------------------------------------------------
-# OCR Functions
+# OCR ENGINE
 # ----------------------------------------------------------------------
-def preprocess_image_for_ocr(pil_img, rect):
+def preprocess_image_for_ocr(pil_img, rect, sensor_name="unknown"):
     x, y, w, h = rect
     cropped = pil_img.crop((x, y, x + w, y + h))
+
+    # Save the raw crop if debug is on
+    if DEBUG_OCR:
+        debug_path = os.path.join(DEBUG_DIR, f"{sensor_name}.png")
+        cropped.save(debug_path)
+
+    # Process for OCR
     img = np.array(cropped.convert("L"))
-    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_OTSU)
+    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # If debug is on, save the "processed" (black/white) version too
+    if DEBUG_OCR:
+        processed_path = os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png")
+        cv2.imwrite(processed_path, img)
+
     if img.mean() < 127:
         img = cv2.bitwise_not(img)
     return Image.fromarray(img)
 
 
 def crop_and_ocr(image, sensor_config: SensorConfig):
-    preprocessed = preprocess_image_for_ocr(image, sensor_config.rect)
-
+    preprocessed = preprocess_image_for_ocr(
+        image, sensor_config.rect, sensor_config.name
+    )
     whitelist = tessedit_char_whitelist.get(sensor_config.parser_type)
-    config = f"--psm {sensor_config.page_segmentation_mode} --oem 3"
+    tess_config = f"--psm {sensor_config.page_segmentation_mode} --oem 3"
     if whitelist:
-        config += f" -c tessedit_char_whitelist={whitelist}"
+        tess_config += f" -c tessedit_char_whitelist={whitelist}"
 
     raw_text = pytesseract.image_to_string(
-        preprocessed, "deu", config=config  # Pass it here!
+        preprocessed, "deu", config=tess_config
     ).strip()
     return parse_value(raw_text, sensor_config)
 
 
-def get_associations(images):
-    img1, img2 = images
-    sollwerte_text_1 = crop_and_ocr(img1, sollwerte)
-    sollwerte_text_2 = crop_and_ocr(img2, sollwerte)
+def is_area_grey(img_path, rect):
+    """Checks if the area (x, y, w, h) in the image is Grey."""
+    x, y, w, h = rect
 
-    logger.debug(f"Sollwerte 1: '{sollwerte_text_1}' | 2: '{sollwerte_text_2}'")
+    # Load image and crop
+    img = cv2.imread(img_path)
+    if img is None:
+        return False
 
-    if isinstance(sollwerte_text_1, str) and "sollwerte" in sollwerte_text_1.lower():
-        return [(boiler_sensors, ""), (main_sensors, "")]
-    elif isinstance(sollwerte_text_2, str) and "sollwerte" in sollwerte_text_2.lower():
-        return [(main_sensors, ""), (boiler_sensors, "")]
-    return [(main_sensors, ""), ({}, "")]
+    crop = img[y : y + h, x : x + w]
 
+    # Convert to HSV (Hue, Saturation, Value)
+    hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
 
-def capture_heizomat_parallel(screenshot1_path, screenshot2_path):
-    imgs = [Image.open(screenshot1_path), Image.open(screenshot2_path)]
-    suffix_img_dict_list = get_associations(imgs)
+    # Calculate average Saturation and Value
+    avg_saturation = np.mean(hsv_crop[:, :, 1])
+    avg_value = np.mean(hsv_crop[:, :, 2])
 
-    # Limit workers so we don't spawn too many OCR threads on the Pi
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-    try:
-        futures = {
-            f"{sensor_config.name}{suffix}": executor.submit(
-                crop_and_ocr, img, sensor_config
-            )
-            for img, (sensor_list, suffix) in zip(imgs, suffix_img_dict_list)
-            for sensor_config in sensor_list
-        }
-
-        results = {}
-        for key, future in sorted(futures.items()):
-            try:
-                # Protect against OCR hangs on a single sensor blocking the whole loop
-                results[key] = future.result(timeout=OCR_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                logger.error(
-                    f"⏱️ OCR timeout after {OCR_TIMEOUT}s for sensor '{key}'"
-                )
-                results[key] = None
-            except Exception as e:
-                logger.error(f"❌ OCR error for sensor '{key}': {e}")
-                results[key] = None
-
-        # If everything timed out or failed, signal an overall failure
-        if all(v is None for v in results.values()):
-            logger.error(
-                "🚨 All OCR tasks failed or timed out in this cycle — returning empty values"
-            )
-            return {}
-
-        return results
-    finally:
-        # Do not block waiting for stuck OCR threads; let them die in the background
-        try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except TypeError:
-            executor.shutdown(wait=False)
-
-
-# ----------------------------------------------------------------------
-# MAIN FUNCTIONS
-# ----------------------------------------------------------------------
-def read_values():
-    x, y = 649, 528
-
-    logger.debug("📸 Capturing...")
-    # ensure stale chromium children are not lingering
-    try:
-        subprocess.run(["pkill", "-f", "chromium"], check=False)
-    except Exception:
-        logger.debug("Could not pkill chromium (maybe not installed)")
-
-    try:
-        res = subprocess.run(
-            ["python3", "capture_screenshot_script.py", "double", str(URL), str(x), str(y)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=CAPTURE_TIMEOUT,
-        )
-        if res.stdout:
-            logger.debug(f"capture stdout: {res.stdout}")
-        if res.stderr:
-            logger.warning(f"capture stderr: {res.stderr}")
-    except subprocess.TimeoutExpired as e:
-        logger.error(f"❌ Capture timed out after {CAPTURE_TIMEOUT}s: {e}")
-        try:
-            subprocess.run(["pkill", "-f", "chromium"], check=False)
-        except Exception:
-            pass
-        reap_zombies()
-        return {}
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Capture subprocess failed: {e}; stdout={e.stdout}; stderr={e.stderr}")
-        try:
-            subprocess.run(["pkill", "-f", "chromium"], check=False)
-        except Exception:
-            pass
-        reap_zombies()
-        return {}
-    except Exception as e:
-        logger.exception(f"❌ Unexpected capture error: {e}")
-        try:
-            subprocess.run(["pkill", "-f", "chromium"], check=False)
-        except Exception:
-            pass
-        reap_zombies()
-        return {}
-
-    try:
-        values = capture_heizomat_parallel("screenshot1.png", "screenshot2.png")
-
-        for path in ["screenshot1.png", "screenshot2.png"]:
-            if os.path.exists(path):
-                os.remove(path)
-        # reap any finished child processes to avoid defunct chromium entries
-        reap_zombies()
-
-        logger.info(f"✅ OCR: {len(values)} values")
-        return values
-    except Exception as e:
-        logger.error(f"❌ Capture failed: {e}")
-        return {}
-
-
-def reap_zombies():
-    """Try to reap any zombie child processes."""
-    try:
-        while True:
-            pid, status = os.waitpid(-1, os.WNOHANG)
-            if pid == 0:
-                break
-            logger.info(f"♻️ Reaped child process {pid}")
-    except ChildProcessError:
-        # no child processes
-        return
-    except OSError as e:
-        logger.debug(f"reap_zombies OSError: {e}")
-        return
-
-
-def state_topic(key: str) -> str:
-    return f"{MQTT_TOPIC}/{key}"
-
-
-# ----------------------------------------------------------------------
-# HA Auto-Discovery
-# ----------------------------------------------------------------------
-def create_ha_discovery(key: str, sensor_config: SensorConfig):
-    object_id = key.lower()
-    discovery_topic = f"{HA_DISCOVERY_PREFIX}/sensor/heizomat/{object_id}/config"
-
-    config = {
-        "name": key,
-        "default_entity_id": f"sensor.{SENSOR_BASENAME}_{object_id}",
-        "unique_id": f"{SENSOR_BASENAME}_{object_id}",
-        "state_topic": MQTT_TOPIC,
-        "value_template": f"{{{{ value_json.get('{key}', '') }}}}",
-        "payload_available": "ready",
-        "payload_not_available": "lost",
-        "device": {
-            "identifiers": ["heizomat"],
-            "name": "Heizomat",
-            "manufacturer": "Heizomat",
-            "model": "Biomass Boiler",
-        },
-    }
-
-    if sensor_config.unit:
-        config["unit_of_measurement"] = sensor_config.unit
-    if sensor_config.device_class:
-        config["device_class"] = sensor_config.device_class
-    if sensor_config.state_class:
-        config["state_class"] = sensor_config.state_class
-    if sensor_config.icon:
-        config["icon"] = sensor_config.icon
-
-    return discovery_topic, config
-
-
-def send_ha_discovery():
-    logger.info("🚀 HA Auto-Discovery (25+ sensors)...")
-
-    # mqtt_client.publish("homeassistant/sensor/heizomat_+/config", "", qos=0, retain=False)
-    # Main sensors
-    for sensor_config in chain(main_sensors, boiler_sensors):
-        topic, config = create_ha_discovery(sensor_config.name, sensor_config)
-        mqtt_client.publish(topic, json.dumps(config), qos=0, retain=True)
+    if DEBUG_OCR:
+        # Save the color-check crop so you can see what it's looking at
+        cv2.imwrite(os.path.join(DEBUG_DIR, "COLOR_CHECK_AREA.png"), crop)
         logger.info(
-            f"📡 {sensor_config.name}: {sensor_config.unit or 'text'} ({sensor_config.icon})"
+            f"🎨 Color Check: Avg Saturation={avg_saturation:.2f}, Avg Value={avg_value:.2f}"
         )
 
-    logger.info("✅ HA Discovery COMPLETE!")
+    # GREY logic: In HSV, grey has very low saturation.
+    # Usually, saturation < 50 (out of 255) is grey/white/black.
+    if avg_saturation < 50:
+        return True
+    return False
 
 
 # ----------------------------------------------------------------------
-# MQTT Setup
+# VNC CAPTURE
 # ----------------------------------------------------------------------
-mqtt_connected = False
+def vnc_cmd(actions: list):
+    # Ensure display :0 is there
+    addr = VNC_ADDRESS if ":" in VNC_ADDRESS else f"{VNC_ADDRESS}:0"
+    base = ["vncdotool", "-s", addr]
+    if VNC_PW:
+        base.extend(["-p", VNC_PW])
+
+    # Final command sent to OS: vncdotool -s IP:0 -p PW mousemove 649 455 click 1
+    try:
+        subprocess.run(base + actions, check=True, capture_output=True, timeout=15)
+        return True
+    except Exception as e:
+        logger.error(f"VNC Error: {e}")
+        return False
 
 
-def on_connect(client, userdata, flags, rc):
+def capture_hmi():
+    # 1. Capture first screen
+    if not vnc_cmd(["capture", "screenshot1.png"]):
+        return False
+
+    # 2. PERFORM THE COLOR CHECK
+    # Area: x=580, y=0, w=20, h=35
+    if not is_area_grey("screenshot1.png", (580, 0, 20, 35)):
+        logger.info("⏸️ HMI State: Red/Green detected. Skipping this cycle (No error).")
+        return None  # Soft "failure" - do not increment watchdog
+
+    # 3. Move to coordinates and THEN click button 1
+    # Format: mousemove X Y click 1
+    if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
+        return False
+
+    # time.sleep(1.5)  # Wait for page flip
+
+    # 4. Capture second screen
+    if not vnc_cmd(["capture", "screenshot2.png"]):
+        return False
+
+    if DEBUG_OCR:
+        import shutil
+
+        # Save them with fixed names so they are easy to find in the volume
+        shutil.copy("screenshot1.png", os.path.join(DEBUG_DIR, "_screenshot1.png"))
+        shutil.copy("screenshot2.png", os.path.join(DEBUG_DIR, "_screenshot2.png"))
+
+    vnc_cmd(["mousemove", "649", "455", "click", "1"])
+    return True
+
+
+# ----------------------------------------------------------------------
+# MQTT & DISCOVERY
+# ----------------------------------------------------------------------
+def on_connect(client, userdata, flags, reason_code, properties=None):
     global mqtt_connected
-    if rc == 0:
-        logger.info(f"✅ MQTT Connected {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+    # 'rc' is now called 'reason_code' in the new API
+    if reason_code == 0:
+        logger.info("✅ MQTT Connected")
         mqtt_connected = True
-        send_ha_discovery()
+        send_ha_discovery(client)
     else:
-        logger.error(f"❌ MQTT failed rc={rc}")
+        logger.error(f"❌ MQTT Connection failed: {reason_code}")
 
 
-mqtt_client = mqtt.Client(client_id="heizomat-publisher")
-mqtt_client.on_connect = on_connect
+def send_ha_discovery(client):
+    logger.info("📡 Sending HA Discovery...")
+    for sensor in chain(main_sensors, boiler_sensors):
+        obj_id = sensor.name.lower()
+        topic = f"{HA_DISCOVERY_PREFIX}/sensor/heizomat/{obj_id}/config"
+        config = {
+            "name": f"Heizomat {sensor.name}",
+            "unique_id": f"heizomat_{obj_id}",
+            "state_topic": MQTT_TOPIC,
+            "value_template": f"{{{{ value_json.{sensor.name} }}}}",
+            "device": {
+                "identifiers": ["heizomat"],
+                "name": "Heizomat Boiler",
+                "manufacturer": "Heizomat",
+            },
+            "icon": sensor.icon,
+        }
+        if sensor.unit:
+            config["unit_of_measurement"] = sensor.unit
+        if sensor.device_class:
+            config["device_class"] = sensor.device_class
+        if sensor.state_class:
+            config["state_class"] = sensor.state_class
 
-if MQTT_USERNAME:
-    logger.info(f"🔐 MQTT auth: {MQTT_USERNAME}")
-    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+        client.publish(topic, json.dumps(config), retain=True)
 
-mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
-mqtt_client.loop_start()
-logger.info("✅ MQTT ready")
 
 # ----------------------------------------------------------------------
 # MAIN LOOP
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    time.sleep(3)
-    logger.info(f"⏰ Main loop ({PUBLISH_INTERVAL}s)")
-    # Simple watchdog: exit process after N consecutive empty captures so Docker can restart it
+    mqtt_client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2, client_id="heizomat_vnc_monitor"
+    )
+    mqtt_client.on_connect = on_connect
+    if MQTT_USERNAME:
+        mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
+    try:
+        mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+        mqtt_client.loop_start()
+    except Exception as e:
+        logger.error(f"Could not connect to MQTT: {e}")
+
     consecutive_failures = 0
 
     while True:
-        try:
-            # read OCR values
-            values = read_values()
-            values["timestamp"] = time.time()
-            if mqtt_connected and mqtt_client and values:
-                # publish each sensor individually
-                payload = json.dumps(values)
-                mqtt_client.publish(MQTT_TOPIC, payload, qos=1, retain=False)
-                logger.info(
-                    f"📤 Published {len(values)} individual sensors → {MQTT_TOPIC}/"
-                )
-                # reset watchdog on success
-                consecutive_failures = 0
+        status = capture_hmi()
+        if status is None:
+            logger.info(
+                "⏸️ Skipping data extraction due to HMI state (Red/Green detected)."
+            )
+            # Soft failure (color check failed) - do not increment watchdog
+            continue
+        elif status:
+            try:
+                img1 = Image.open("screenshot1.png")
+                img2 = Image.open("screenshot2.png")
 
-            else:
-                logger.warning("⏳ No MQTT connection or no values to publish")
-                # consider this a failure if no values were returned
-                if not values:
-                    consecutive_failures += 1
-                    logger.warning(f"⚠️ Consecutive empty captures: {consecutive_failures}/{WATCHDOG_MAX_FAILURES}")
+                # Detect which image is which
+                check_text = crop_and_ocr(img1, sollwerte_indicator)
+                if check_text and "soll" in str(check_text).lower():
+                    mapping = [(boiler_sensors, img1), (main_sensors, img2)]
                 else:
-                    # if MQTT disconnected but we have values, don't increment watchdog
+                    mapping = [(main_sensors, img1), (boiler_sensors, img2)]
+
+                final_data = {}
+
+                # Use a dictionary to track which sensor goes with which future
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                    future_to_sensor = {}
+                    for sensors, img in mapping:
+                        for s in sensors:
+                            # Submit the OCR task
+                            future = executor.submit(crop_and_ocr, img, s)
+                            future_to_sensor[future] = s.name
+
+                    for future in concurrent.futures.as_completed(future_to_sensor):
+                        sensor_name = future_to_sensor[future]
+                        try:
+                            val = future.result()
+                            if val is not None:
+                                final_data[sensor_name] = val
+                        except Exception as exc:
+                            logger.error(
+                                f"❌ Sensor '{sensor_name}' generated an exception: {exc}"
+                            )
+
+                # Summary Logging
+                total_expected = len(main_sensors) + len(boiler_sensors)
+                success_count = len(final_data)
+
+                if success_count < total_expected:
+                    missing = [
+                        s.name
+                        for s in chain(main_sensors, boiler_sensors)
+                        if s.name not in final_data
+                    ]
+                    logger.warning(
+                        f"Missing {total_expected - success_count} sensors: {', '.join(missing)}"
+                    )
+
+                if final_data:
+                    final_data["timestamp"] = datetime.datetime.now().isoformat()
+                    mqtt_client.publish(MQTT_TOPIC, json.dumps(final_data), qos=1)
+                    logger.info(f"📤 Published {len(final_data)} sensors")
                     consecutive_failures = 0
+                else:
+                    logger.warning("Empty data set after OCR")
+                    consecutive_failures += 1
 
-            if consecutive_failures >= WATCHDOG_MAX_FAILURES:
-                logger.error(
-                    f"🚨 Watchdog triggered: {consecutive_failures} consecutive failures — exiting to allow container restart"
-                )
-                # ensure MQTT loop stops cleanly before exit
-                try:
-                    mqtt_client.loop_stop()
-                    mqtt_client.disconnect()
-                except Exception:
-                    pass
-                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Processing error: {e}")
+                consecutive_failures += 1
+            finally:
+                for p in ["screenshot1.png", "screenshot2.png"]:
+                    if os.path.exists(p):
+                        os.remove(p)
+        else:
+            consecutive_failures += 1
 
-        except KeyboardInterrupt:
-            logger.info("🛑 Graceful shutdown")
-            break
-        except Exception as e:
-            logger.error(f"❌ Loop error: {e}")
+        if consecutive_failures >= WATCHDOG_MAX_FAILURES:
+            logger.error("🚨 Watchdog failure limit reached. Restarting...")
+            sys.exit(1)
 
         time.sleep(PUBLISH_INTERVAL)
-
-    mqtt_client.loop_stop()
-    mqtt_client.disconnect()

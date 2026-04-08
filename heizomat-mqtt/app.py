@@ -326,7 +326,7 @@ setpoint_sensors = [
         unit="°C",
         device_class="temperature",
         state_class="measurement",
-        icon="mdi:thermometer",
+        icon="mdi:thermometer-chevron-up",
         min_value=10,
         max_value=99,
     ),
@@ -337,7 +337,7 @@ setpoint_sensors = [
         unit="°C",
         device_class="temperature",
         state_class="measurement",
-        icon="mdi:thermometer",
+        icon="mdi:thermometer-chevron-up",
         min_value=10,
         max_value=99,
     ),
@@ -707,18 +707,23 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 
 def send_ha_discovery(client):
-    logger.info("📡 Sending HA Discovery...")
+    prefix = SENSOR_BASENAME
+
+    logger.info(f"📡 Sending HA Discovery using prefix: {prefix}...")
+
     for sensor in chain.from_iterable(sensor_dict.values()):
         obj_id = sensor.name.lower()
-        topic = f"{HA_DISCOVERY_PREFIX}/sensor/heizomat/{obj_id}/config"
+
+        topic = f"{HA_DISCOVERY_PREFIX}/sensor/{prefix}/{obj_id}/config"
+
         config = {
-            "name": f"Heizomat {sensor.name}",
-            "unique_id": f"heizomat_{obj_id}",
+            "name": f"{sensor.name}",
+            "unique_id": f"{prefix}_{obj_id}",
             "state_topic": MQTT_TOPIC,
             "value_template": f"{{{{ value_json.{sensor.name} }}}}",
             "device": {
-                "identifiers": ["heizomat"],
-                "name": "Heizomat Boiler",
+                "identifiers": [prefix],
+                "name": prefix,
                 "manufacturer": "Heizomat",
             },
             "icon": sensor.icon,

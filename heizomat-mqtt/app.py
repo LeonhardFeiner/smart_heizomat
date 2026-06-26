@@ -91,7 +91,7 @@ main_sensors = [
         max_value=30,
     ),
     SensorConfig(
-        "Hackgut_P",
+        "Primärluft",
         (207, 264, 44, 20),
         "int",
         unit="%",
@@ -102,7 +102,7 @@ main_sensors = [
         max_value=100,
     ),
     SensorConfig(
-        "Hackgut_S",
+        "Sekundärluft",
         (207, 234, 44, 20),
         "int",
         unit="%",
@@ -718,13 +718,17 @@ def send_ha_discovery(client):
 
         config = {
             "name": f"{sensor.name}",
+            "default_entity_id": f"sensor.{prefix}_{obj_id}",
             "unique_id": f"{prefix}_{obj_id}",
             "state_topic": MQTT_TOPIC,
             "value_template": f"{{{{ value_json.{sensor.name} }}}}",
+            "payload_available": "ready",
+            "payload_not_available": "lost",
             "device": {
                 "identifiers": [prefix],
                 "name": prefix,
                 "manufacturer": "Heizomat",
+                "model": "RHK-AK 100",
             },
             "icon": sensor.icon,
         }
@@ -734,6 +738,8 @@ def send_ha_discovery(client):
             config["device_class"] = sensor.device_class
         if sensor.state_class:
             config["state_class"] = sensor.state_class
+        if sensor.icon:
+            config["icon"] = sensor.icon
 
         client.publish(topic, json.dumps(config), retain=True)
 

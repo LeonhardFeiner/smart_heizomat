@@ -1,6 +1,0 @@
-flask==3.1.0
-pyppeteer==1.0.2          # still the de-facto final version
-pytesseract==0.3.13        # latest or near-latest 0.3.x
-pillow==11.0.0
-opencv-python==4.10.0.84
-numpy==2.1.3

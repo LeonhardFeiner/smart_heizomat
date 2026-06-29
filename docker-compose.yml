@@ -1,6 +1,6 @@
 services:
   novnc:
-    build: ./novnc_arm_dotcursor
+    image: feiner/novnc-arm-dotcursor:latest
     container_name: novnc
     network_mode: "host"
     environment:
@@ -9,19 +9,8 @@ services:
       - "6080:6080"
     restart: unless-stopped
 
-  # capture-and-ocr:
-  #   build: ./capture-and-ocr
-  #   container_name: capture-and-ocr
-  #   ports:
-  #     - "3003:3000"
-  #   restart: "no"
-  #   environment:
-  #     - FLASK_ENV=development
-  #     - URL=http://192.168.0.2:6080/vnc_lite.html?password=heizomat&scale=true
-
-
   heizomat-mqtt:
-    build: ./heizomat-mqtt
+    image: feiner/heizomat-mqtt:latest
     container_name: heizomat-mqtt
     network_mode: "host"
     environment:

@@ -1,6 +1,6 @@
 services:
   novnc:
-    image: feiner/novnc-arm-dotcursor:latest
+    image: feiner/novnc-dotcursor:latest
     container_name: novnc
     network_mode: "host"
     environment:

@@ -34,7 +34,13 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The noVNC web UI is available at `http://<raspberry-pi-ip>:6080`.
+The noVNC web UI is available at `http://<raspberry-pi-ip>:6080`. Three pages are served:
+
+| URL | Description |
+|---|---|
+| `http://<raspberry-pi-ip>:6080/vnc_lite_modified.html?password=<vnc_password>` | Lite UI with dot cursor patch (recommended) |
+| `http://<raspberry-pi-ip>:6080/vnc_lite.html?password=<vnc_password>` | Lite UI (original) |
+| `http://<raspberry-pi-ip>:6080/vnc.html?password=<vnc_password>` | Full noVNC UI |
 
 ## Configuration
 

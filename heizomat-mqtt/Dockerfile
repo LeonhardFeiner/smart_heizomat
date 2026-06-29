@@ -18,11 +18,10 @@ WORKDIR /app
 # 3. Install Python dependencies
 # We copy requirements.txt first to leverage Docker layer caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Copy the application script
-# Renamed from monitor.py to app.py as requested
+# 4. Copy the application
+COPY heizomat/ ./heizomat/
 COPY app.py .
 
 # Add this near the bottom of your Dockerfile

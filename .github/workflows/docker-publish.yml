@@ -78,7 +78,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./novnc_arm_dotcursor
-          platforms: linux/arm/v7
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha

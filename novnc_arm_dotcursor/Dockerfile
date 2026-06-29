@@ -1,18 +1,14 @@
-FROM arm32v7/debian:bullseye-slim
+FROM debian:bullseye-slim
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    python3 \
-    python3-pip \
-    bash \
-    libffi-dev \
-    build-essential \
-    && pip3 install websockify
+    python3-websockify \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC
 
 WORKDIR /opt/noVNC
-
 
 RUN sed '/{ credentials: { password: password } });/a \
 rfb.showDotCursor = true;' /opt/noVNC/vnc_lite.html > /opt/noVNC/vnc_lite_modified.html

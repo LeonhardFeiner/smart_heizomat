@@ -4,7 +4,7 @@ services:
     container_name: novnc
     network_mode: "host"
     environment:
-      - VNC_SERVER=${VNC_SERVER}
+      - VNC_SERVER=${VNC_ADDRESS}
     ports:
       - "6080:6080"
     restart: unless-stopped

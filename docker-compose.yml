@@ -4,7 +4,7 @@ services:
     container_name: novnc
     network_mode: "host"
     environment:
-      - VNC_SERVER=192.168.0.248
+      - VNC_SERVER=${VNC_SERVER}
     ports:
       - "6080:6080"
     restart: unless-stopped
@@ -15,16 +15,16 @@ services:
     network_mode: "host"
     environment:
       - TZ=Europe/Berlin
-      - MQTT_BROKER_HOST=
+      - MQTT_BROKER_HOST=${MQTT_BROKER_HOST}
       - MQTT_BROKER_PORT=1883
       - MQTT_TOPIC=heizomat/hackschnitzel
       - SENSOR_BASENAME=hackschnitzel
-      - PUBLISH_INTERVAL=10
-      - MQTT_USERNAME=
-      - MQTT_PASSWORD=
-      - VNC_ADDRESS=
-      - VNC_PW=
+      - PUBLISH_INTERVAL=600
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - VNC_ADDRESS=${VNC_ADDRESS}
+      - VNC_PW=${VNC_PW}
       - DEBUG_OCR=false
     volumes:
-      - ./debug_crops:/app/debug_crops  # <--- Map the folder to your local drive
+      - ./debug_crops:/app/debug_crops
     restart: unless-stopped

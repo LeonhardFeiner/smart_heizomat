@@ -1,0 +1,6 @@
+dev/*
+*.png
+.vscode/*
+*.pyc
+__pycache__/*
+.env

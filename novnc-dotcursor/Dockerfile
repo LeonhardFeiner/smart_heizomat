@@ -1,6 +1,7 @@
 FROM debian:bullseye-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     python3-websockify \
     && apt-get clean \

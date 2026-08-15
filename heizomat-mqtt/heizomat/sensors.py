@@ -50,7 +50,7 @@ main_sensors = [
         device_class="duration",
         state_class="measurement",
         icon="mdi:timer",
-        min_value=1,
+        min_value=0,
         max_value=30,
     ),
     SensorConfig(
@@ -83,7 +83,7 @@ main_sensors = [
         device_class="temperature",
         state_class="measurement",
         icon="mdi:thermometer-lines",
-        min_value=30,
+        min_value=0,
         max_value=300,
     ),
     SensorConfig(
@@ -347,6 +347,11 @@ sensor_dict = {
 
 # Detection sensor: Check if "Sollwerte" text exists at this spot
 sollwerte_indicator = SensorConfig("_sollwerte", (405, 436, 89, 39), "text")
+
+# Settle-check sensor: the clock is the most sensitive field to a mid-redraw
+# capture, so it's used to detect and retry a capture taken while the HMI's
+# top info bar was still repainting.
+uhrzeit_sensor = next(s for s in main_sensors if s.name == "Uhrzeit")
 
 
 # ----------------------------------------------------------------------

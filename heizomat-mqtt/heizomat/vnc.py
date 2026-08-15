@@ -7,12 +7,15 @@ import time
 import cv2
 
 from .ocr import DEBUG_DIR, DEBUG_OCR, crop_and_ocr, is_area_grey
-from .sensors import sollwerte_indicator
+from .sensors import sollwerte_indicator, uhrzeit_sensor
 
 logger = logging.getLogger(__name__)
 
 VNC_ADDRESS = os.environ.get("VNC_ADDRESS", "")
 VNC_PW = os.environ.get("VNC_PW", "")
+
+SETTLE_RETRIES = 2
+SETTLE_SLEEP = 0.4
 
 
 def vnc_cmd(actions: list):
@@ -70,6 +73,23 @@ def capture_hold_sollwerte(filename="setpoint.png"):
     return img
 
 
+def capture_settled(filename, img):
+    """Retry the capture if the clock is unreadable, which usually means the
+    HMI's top info bar was still mid-redraw when the screenshot was taken."""
+    for attempt in range(SETTLE_RETRIES + 1):
+        if crop_and_ocr(img, uhrzeit_sensor):
+            return img
+        if attempt == SETTLE_RETRIES:
+            logger.warning("Uhrzeit still unreadable after retries; using capture as-is")
+            return img
+        logger.warning("Uhrzeit unreadable, HMI may be mid-redraw; retrying capture")
+        time.sleep(SETTLE_SLEEP)
+        img = capture(filename)
+        if img is None:
+            return None
+    return img
+
+
 def check_sollwerte_page(img):
     check_val = crop_and_ocr(img, sollwerte_indicator)
     return check_val and "soll" in str(check_val).lower()
@@ -101,6 +121,9 @@ def capture_current_page(filename):
         result_dict["setpoint"] = capture_hold_sollwerte()
     else:
         new_name = "main"
+        img = capture_settled(filename, img)
+        if img is None:
+            return None
 
     result_dict[new_name] = img
 

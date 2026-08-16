@@ -179,12 +179,14 @@ def main():
                 sys.exit(1)
 
             elapsed = time.time() - cycle_start
-            sleep_time = max(0, PUBLISH_INTERVAL - elapsed)
-            if sleep_time == 0:
+            if elapsed > PUBLISH_INTERVAL:
                 logger.warning(
                     f"Cycle took longer ({elapsed:.1f}s) than interval ({PUBLISH_INTERVAL}s)!"
                 )
-            time.sleep(sleep_time)
+
+            now = time.time()
+            next_target = (now // PUBLISH_INTERVAL + 1) * PUBLISH_INTERVAL
+            time.sleep(next_target - now)
 
     finally:
         mqtt_client.loop_stop()

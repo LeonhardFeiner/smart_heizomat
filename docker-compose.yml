@@ -12,10 +12,11 @@ services:
   heizomat-mqtt:
     image: feiner/heizomat-mqtt:latest
     container_name: heizomat-mqtt
-    network_mode: "host"
+    networks:
+      - mqtt_net
     environment:
       - TZ=Europe/Berlin
-      - MQTT_BROKER_HOST=${MQTT_BROKER_HOST}
+      - MQTT_BROKER_HOST=mosquitto
       - MQTT_BROKER_PORT=1883
       - MQTT_TOPIC=heizomat/hackschnitzel
       - SENSOR_BASENAME=hackschnitzel
@@ -28,3 +29,8 @@ services:
     volumes:
       - ./debug_crops:/app/debug_crops
     restart: unless-stopped
+
+networks:
+  mqtt_net:
+    external: true
+    name: mqtt_net

@@ -28,7 +28,7 @@ Heizomat HMI (VNC) ──► screenshot ──► OCR ──► MQTT ──► H
 cp .env.example .env
 ```
 
-2. Start the stack:
+2. Start the stack (requires the external `mqtt_net` bridge network, created by the `mosquitto` stack, to already exist):
 
 ```sh
 docker compose up -d
@@ -50,7 +50,6 @@ Non-sensitive settings are hardcoded in `docker-compose.yml`. Secrets go in `.en
 
 | Variable | Description |
 |---|---|
-| `MQTT_BROKER_HOST` | IP or hostname of the MQTT broker |
 | `MQTT_USERNAME` | MQTT username |
 | `MQTT_PASSWORD` | MQTT password |
 | `VNC_ADDRESS` | IP of the Heizomat VNC server |
@@ -61,6 +60,7 @@ Non-sensitive settings are hardcoded in `docker-compose.yml`. Secrets go in `.en
 | Variable | Default | Description |
 |---|---|---|
 | `TZ` | `Europe/Berlin` | Timezone |
+| `MQTT_BROKER_HOST` | `mosquitto` | MQTT broker hostname (resolved on the shared `mqtt_net` bridge network) |
 | `MQTT_BROKER_PORT` | `1883` | MQTT broker port |
 | `MQTT_TOPIC` | `heizomat/hackschnitzel` | Topic for sensor JSON payload |
 | `SENSOR_BASENAME` | `hackschnitzel` | Prefix for HA entity IDs and discovery topics |

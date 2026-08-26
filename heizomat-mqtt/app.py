@@ -48,7 +48,6 @@ logger.info(f"Heizomat MQTT - VNC DIRECT Edition")
 logger.info(f"MQTT={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
 logger.info(f"VNC={VNC_ADDRESS}")
 
-mqtt_connected = False
 _discovery_sent = False
 
 
@@ -63,16 +62,19 @@ def _slugify(name: str) -> str:
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    global mqtt_connected, _discovery_sent
+    global _discovery_sent
     if reason_code == 0:
         logger.info("MQTT Connected")
-        mqtt_connected = True
         if not _discovery_sent:
             send_ha_discovery(client)
             _discovery_sent = True
         client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
     else:
         logger.error(f"MQTT Connection failed: {reason_code}")
+
+
+def on_disconnect(client, userdata, flags, reason_code, properties=None):
+    logger.warning(f"MQTT Disconnected: {reason_code}")
 
 
 def send_ha_discovery(client):
@@ -118,6 +120,7 @@ def main():
         mqtt.CallbackAPIVersion.VERSION2, client_id="heizomat_vnc_monitor"
     )
     mqtt_client.on_connect = on_connect
+    mqtt_client.on_disconnect = on_disconnect
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     mqtt_client.will_set(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)

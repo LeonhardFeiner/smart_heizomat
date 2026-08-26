@@ -75,6 +75,18 @@ Non-sensitive settings are hardcoded in `docker-compose.yml`. Secrets go in `.en
 | `homeassistant/sensor/hackschnitzel/<sensor>/config` | Retained HA discovery config per sensor, sent once on first connect |
 | `hackschnitzel/status` | Retained availability topic (`ready` / `lost`) — LWT on ungraceful disconnect, explicit on graceful shutdown/watchdog restart |
 
+### Removing stale entities
+
+Discovery configs are retained forever once published, so renaming/removing a sensor from `heizomat/sensors.py` leaves a ghost entity in HA. Clear it manually:
+
+```sh
+# List currently retained discovery topics
+mosquitto_sub -h <broker> -u <user> -P <pass> -t 'homeassistant/sensor/hackschnitzel/#' --retained-only -v -W 2
+
+# Retract one (empty retained payload removes the entity from HA)
+mosquitto_pub -h <broker> -u <user> -P <pass> -t 'homeassistant/sensor/hackschnitzel/<old_sensor>/config' -n -r
+```
+
 ## Sensors
 
 The following values are read via OCR:

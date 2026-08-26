@@ -37,6 +37,10 @@ PUBLISH_INTERVAL = float(os.environ.get("PUBLISH_INTERVAL", "10"))
 HA_DISCOVERY_PREFIX = "homeassistant"
 WATCHDOG_MAX_FAILURES = int(os.environ.get("WATCHDOG_MAX_FAILURES", "5"))
 
+AVAILABILITY_TOPIC = f"{SENSOR_BASENAME}/status"
+PAYLOAD_AVAILABLE = "ready"
+PAYLOAD_NOT_AVAILABLE = "lost"
+
 if not VNC_ADDRESS:
     raise ValueError("VNC_ADDRESS environment variable required")
 
@@ -45,6 +49,7 @@ logger.info(f"MQTT={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
 logger.info(f"VNC={VNC_ADDRESS}")
 
 mqtt_connected = False
+_discovery_sent = False
 
 
 # ----------------------------------------------------------------------
@@ -58,11 +63,14 @@ def _slugify(name: str) -> str:
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    global mqtt_connected
+    global mqtt_connected, _discovery_sent
     if reason_code == 0:
         logger.info("MQTT Connected")
         mqtt_connected = True
-        send_ha_discovery(client)
+        if not _discovery_sent:
+            send_ha_discovery(client)
+            _discovery_sent = True
+        client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
     else:
         logger.error(f"MQTT Connection failed: {reason_code}")
 
@@ -81,8 +89,9 @@ def send_ha_discovery(client):
             "unique_id": f"{prefix}_{obj_id}",
             "state_topic": MQTT_TOPIC,
             "value_template": f"{{{{ value_json.{sensor.name} }}}}",
-            "payload_available": "ready",
-            "payload_not_available": "lost",
+            "availability_topic": AVAILABILITY_TOPIC,
+            "payload_available": PAYLOAD_AVAILABLE,
+            "payload_not_available": PAYLOAD_NOT_AVAILABLE,
             "device": {
                 "identifiers": [prefix],
                 "name": prefix,
@@ -98,7 +107,7 @@ def send_ha_discovery(client):
         if sensor.state_class:
             config["state_class"] = sensor.state_class
 
-        client.publish(topic, json.dumps(config), retain=True)
+        client.publish(topic, json.dumps(config), qos=1, retain=True)
 
 
 # ----------------------------------------------------------------------
@@ -111,6 +120,7 @@ def main():
     mqtt_client.on_connect = on_connect
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    mqtt_client.will_set(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)
 
     try:
         mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
@@ -161,7 +171,7 @@ def main():
 
                     if final_data:
                         final_data["timestamp"] = datetime.datetime.now().isoformat()
-                        mqtt_client.publish(MQTT_TOPIC, json.dumps(final_data), qos=1)
+                        mqtt_client.publish(MQTT_TOPIC, json.dumps(final_data), qos=1, retain=True)
                         logger.info(f"Published {len(final_data)} sensors")
                         consecutive_failures = 0
                     else:
@@ -189,6 +199,15 @@ def main():
             time.sleep(next_target - now)
 
     finally:
+        # A clean disconnect() below suppresses the broker-side LWT, so publish
+        # the "lost" availability ourselves for graceful shutdowns (e.g. the
+        # watchdog restart above). Ungraceful deaths still fall back to the LWT.
+        try:
+            mqtt_client.publish(
+                AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True
+            ).wait_for_publish(timeout=2)
+        except Exception:
+            pass
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
 

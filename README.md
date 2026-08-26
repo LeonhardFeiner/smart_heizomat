@@ -71,8 +71,9 @@ Non-sensitive settings are hardcoded in `docker-compose.yml`. Secrets go in `.en
 
 | Topic | Content |
 |---|---|
-| `heizomat/hackschnitzel` | JSON with all sensor values, published every `PUBLISH_INTERVAL` seconds |
-| `homeassistant/sensor/hackschnitzel/<sensor>/config` | Retained HA discovery config per sensor |
+| `heizomat/hackschnitzel` | Retained JSON with all sensor values, published every `PUBLISH_INTERVAL` seconds |
+| `homeassistant/sensor/hackschnitzel/<sensor>/config` | Retained HA discovery config per sensor, sent once on first connect |
+| `hackschnitzel/status` | Retained availability topic (`ready` / `lost`) — LWT on ungraceful disconnect, explicit on graceful shutdown/watchdog restart |
 
 ## Sensors
 

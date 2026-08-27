@@ -15,9 +15,9 @@ from itertools import chain
 
 import paho.mqtt.client as mqtt
 
-from heizomat.sensors import boiler_sensors, main_sensors, sensor_dict, setpoint_sensors
+from heizomat.sensors import ENUM_FALLBACK, boiler_sensors, main_sensors, sensor_dict, setpoint_sensors
 from heizomat.vnc import capture_hmi
-from heizomat.ocr import crop_and_ocr
+from heizomat.ocr import crop_and_ocr, last_raw_text
 
 # ----------------------------------------------------------------------
 # Config
@@ -108,6 +108,8 @@ def send_ha_discovery(client):
             config["device_class"] = sensor.device_class
         if sensor.state_class:
             config["state_class"] = sensor.state_class
+        if sensor.enum_options:
+            config["options"] = list(sensor.enum_options) + [ENUM_FALLBACK]
 
         client.publish(topic, json.dumps(config), qos=1, retain=True)
 
@@ -158,6 +160,10 @@ def main():
                                     final_data[sensor_name] = val
                             except Exception as exc:
                                 logger.error(f"Sensor '{sensor_name}' exception: {exc}")
+
+                    for s in chain.from_iterable(sensor_dict.values()):
+                        if s.parser_type == "enum" and s.name in final_data:
+                            final_data[f"{s.name}_raw"] = last_raw_text.get(s.name, "")
 
                     total_expected = len(main_sensors) + len(boiler_sensors)
                     success_count = len(final_data)

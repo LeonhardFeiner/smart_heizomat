@@ -53,7 +53,7 @@ Non-sensitive settings are hardcoded in `docker-compose.yml`. Secrets go in `.en
 | `MQTT_USERNAME` | MQTT username |
 | `MQTT_PASSWORD` | MQTT password |
 | `VNC_ADDRESS` | IP of the Heizomat VNC server |
-| `VNC_PW` | VNC password |
+| `VNC_PASSWORD` | VNC password |
 
 ### `docker-compose.yml` (non-sensitive)
 

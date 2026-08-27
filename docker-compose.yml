@@ -24,7 +24,7 @@ services:
       - MQTT_USERNAME=${MQTT_USERNAME}
       - MQTT_PASSWORD=${MQTT_PASSWORD}
       - VNC_ADDRESS=${VNC_ADDRESS}
-      - VNC_PW=${VNC_PW}
+      - VNC_PASSWORD=${VNC_PASSWORD}
       - DEBUG_OCR=false
     volumes:
       - ./debug_crops:/app/debug_crops

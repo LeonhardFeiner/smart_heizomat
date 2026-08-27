@@ -12,7 +12,7 @@ from .sensors import sollwerte_indicator, uhrzeit_sensor
 logger = logging.getLogger(__name__)
 
 VNC_ADDRESS = os.environ.get("VNC_ADDRESS", "")
-VNC_PW = os.environ.get("VNC_PW", "")
+VNC_PW = os.environ.get("VNC_PASSWORD", "")
 
 SETTLE_RETRIES = 2
 SETTLE_SLEEP = 0.4

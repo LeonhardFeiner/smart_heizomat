@@ -1,5 +1,7 @@
 import datetime
+import difflib
 import logging
+import os
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -10,7 +12,7 @@ logger = logging.getLogger(__name__)
 class SensorConfig:
     name: str
     rect: Tuple[int, int, int, int]  # (x, y, w, h)
-    parser_type: str  # "float", "int", "text", "datetime"
+    parser_type: str  # "float", "int", "text", "datetime", "enum"
     page_segmentation_mode: int = 7
     unit: str | None = None
     device_class: str | None = None
@@ -18,6 +20,7 @@ class SensorConfig:
     icon: str = "mdi:counter"
     min_value: float | int | None = None
     max_value: float | int | None = None
+    enum_options: Tuple[str, ...] | None = None  # parser_type == "enum" only
 
 
 tessedit_char_whitelist = {
@@ -28,6 +31,64 @@ tessedit_char_whitelist = {
 }
 
 last_values: dict = {}
+
+# ----------------------------------------------------------------------
+# ENUM MATCHING
+# ----------------------------------------------------------------------
+# Betriebsart/Betriebszustand states are fixed by the boiler's firmware
+# (confirmed via ~12 days of OCR history + the Heizomat TouchControl dealer
+# page), so they're hardcoded here. Brennstoff (fuel type) is an
+# installation setting instead — configurable via env var, defaulting to
+# what this deployment actually burns.
+ENUM_MATCH_THRESHOLD = 0.6
+ENUM_FALLBACK = "Unbekannt"
+
+BETRIEBSART_OPTIONS = (
+    "Wartung",
+    "Wartung mit RGG",
+    "Dauerbetrieb",
+    "Zündbetrieb",
+    "Boilerbetrieb",
+    "Gebläsenachlauf",
+)
+BETRIEBSZUSTAND_OPTIONS = (
+    "Wartung",
+    "Wartung mit RGG",
+    "Vorglühen",
+    "Zündvorgang",
+    "Glutbettbildung",
+    "Lastbetrieb",
+    "Dauerbetrieb",
+    "Zündbetrieb",
+    "Boilerbetrieb",
+    "Gebläsenachlauf",
+)
+BRENNSTOFF_OPTIONS = tuple(
+    v.strip()
+    for v in os.environ.get("BRENNSTOFF_OPTIONS", "Hackschnitzel").split(",")
+    if v.strip()
+)
+
+
+def match_enum(raw_text, options, threshold=ENUM_MATCH_THRESHOLD, fallback=ENUM_FALLBACK):
+    """Fuzzy-matches raw OCR text against known enum options (edit-distance
+    ratio, tolerant of OCR noise). Returns (value, is_exact) — is_exact is
+    False whenever the raw text wasn't a clean 1:1 match, whether or not a
+    fuzzy match was accepted, so the caller can flag it for review."""
+    text = (raw_text or "").strip().lower()
+    if not text or not options:
+        return fallback, False
+
+    best_option, best_score = None, 0.0
+    for option in options:
+        score = difflib.SequenceMatcher(None, text, option.lower()).ratio()
+        if score > best_score:
+            best_option, best_score = option, score
+
+    if best_score >= threshold:
+        return best_option, best_score >= 1.0
+    return fallback, False
+
 
 # ----------------------------------------------------------------------
 # SENSOR DEFINITIONS (Y-Coordinates reduced by 73)
@@ -166,20 +227,22 @@ main_sensors = [
     SensorConfig(
         "Brennstoff",
         (8, 144, 264, 21),
-        "text",
+        "enum",
         unit=None,
-        device_class=None,
+        device_class="enum",
         state_class=None,
         icon="mdi:fuel",
+        enum_options=BRENNSTOFF_OPTIONS,
     ),
     SensorConfig(
         "Betriebszustand",
         (403, 42, 291, 31),
-        "text",
+        "enum",
         unit=None,
-        device_class=None,
+        device_class="enum",
         state_class=None,
         icon="mdi:power",
+        enum_options=BETRIEBSZUSTAND_OPTIONS,
     ),
     SensorConfig(
         "Uhrzeit",
@@ -193,11 +256,12 @@ main_sensors = [
     SensorConfig(
         "Betriebsart",
         (600, 1, 200, 33),
-        "text",
+        "enum",
         unit=None,
-        device_class=None,
+        device_class="enum",
         state_class=None,
         icon="mdi:cog",
+        enum_options=BETRIEBSART_OPTIONS,
     ),
 ]
 

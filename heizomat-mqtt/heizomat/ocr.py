@@ -67,16 +67,19 @@ def preprocess_image_for_ocr(cv_img, rect, sensor_name="unknown", parser_type=No
         # The VNC capture carries single/few-pixel chromatic fringing (visible
         # red/green ghosting on character edges) that corrupts grayscale
         # conversion and OTSU thresholding, dropping small marks like the
-        # decimal comma or hallucinating extra digits. A median blur on the
-        # color crop removes the fringe before it reaches grayscale/threshold.
-        # (Not applied to enum/text crops below -- it measurably hurt the one
-        # bold-font enum misread tested, while numeric crops improved.)
-        denoised = cv2.medianBlur(cropped, 3)
-        gray = cv2.cvtColor(denoised, cv2.COLOR_BGR2GRAY)
+        # decimal comma or hallucinating extra digits. A median blur cleans
+        # this up -- but applying it to the *native-size* crop first erodes
+        # thin-stroke fonts (a 1px-wide digit stroke looks like salt-and-
+        # pepper noise to a 3x3 median kernel and gets wiped out entirely --
+        # this dropped the leading "2" of "21,5" down to "1,5" in production).
+        # Thresholding and upscaling first, then denoising the now-3x-wider
+        # strokes, removes the fringe artifacts without erasing real digits.
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         if np.mean(thresh) < 127:
             thresh = cv2.bitwise_not(thresh)
         thresh = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_LINEAR)
+        thresh = cv2.medianBlur(thresh, 3)
     else:
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)

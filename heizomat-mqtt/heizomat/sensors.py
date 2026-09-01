@@ -24,10 +24,14 @@ class SensorConfig:
 
 
 tessedit_char_whitelist = {
-    "float": "0123456789,",
-    "int": "0123456789",
+    "float": "0123456789,-",
+    "int": "0123456789-",
     "str": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄäÖöÜüß0123456789 ,.-",
     "datetime": "0123456789.: ",
+    # Sensor rects use parser_type "enum", not "str" -- without this key the
+    # lookup in ocr.crop_and_ocr() missed and enum sensors (Betriebsart,
+    # Betriebszustand, Brennstoff) ran with NO character whitelist at all.
+    "enum": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄäÖöÜüß0123456789 ,.",
 }
 
 last_values: dict = {}
@@ -228,6 +232,7 @@ main_sensors = [
         "Brennstoff",
         (8, 144, 264, 21),
         "enum",
+        page_segmentation_mode=8,  # single-word mode reads these short bold labels far more reliably than the psm-7 default (verified against a misread anomaly capture)
         unit=None,
         device_class="enum",
         state_class=None,
@@ -238,6 +243,7 @@ main_sensors = [
         "Betriebszustand",
         (403, 42, 291, 31),
         "enum",
+        page_segmentation_mode=8,
         unit=None,
         device_class="enum",
         state_class=None,
@@ -257,6 +263,7 @@ main_sensors = [
         "Betriebsart",
         (600, 1, 200, 33),
         "enum",
+        page_segmentation_mode=8,
         unit=None,
         device_class="enum",
         state_class=None,

@@ -45,21 +45,46 @@ def _capture_anomaly(full_img, crop_img, sensor_name, raw_text):
         )
 
 
-def preprocess_image_for_ocr(cv_img, rect, sensor_name="unknown"):
+def preprocess_image_for_ocr(cv_img, rect, sensor_name="unknown", parser_type=None):
     x, y, w, h = rect
     cropped = cv_img[y : y + h, x : x + w]
 
     if DEBUG_OCR:
         cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}.png"), cropped)
 
-    gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if parser_type == "datetime":
+        # The clock is small enough that binarizing at native size then
+        # LINEAR-upscaling the resulting blocky mask corrupts digits (observed:
+        # "57" -> "537", a phantom stroke inserted between two adjacent glyphs).
+        # Upscaling the grayscale image with CUBIC *before* thresholding keeps
+        # the antialiased edges intact for OTSU to binarize cleanly.
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        upscaled = cv2.resize(gray, (w * 4, h * 4), interpolation=cv2.INTER_CUBIC)
+        _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if np.mean(thresh) < 127:
+            thresh = cv2.bitwise_not(thresh)
+    elif parser_type in ("float", "int"):
+        # The VNC capture carries single/few-pixel chromatic fringing (visible
+        # red/green ghosting on character edges) that corrupts grayscale
+        # conversion and OTSU thresholding, dropping small marks like the
+        # decimal comma or hallucinating extra digits. A median blur on the
+        # color crop removes the fringe before it reaches grayscale/threshold.
+        # (Not applied to enum/text crops below -- it measurably hurt the one
+        # bold-font enum misread tested, while numeric crops improved.)
+        denoised = cv2.medianBlur(cropped, 3)
+        gray = cv2.cvtColor(denoised, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if np.mean(thresh) < 127:
+            thresh = cv2.bitwise_not(thresh)
+        thresh = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_LINEAR)
+    else:
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if np.mean(thresh) < 127:
+            thresh = cv2.bitwise_not(thresh)
+        thresh = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_LINEAR)
 
-    if np.mean(thresh) < 127:
-        thresh = cv2.bitwise_not(thresh)
-
-    upscaled = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_LINEAR)
-    bordered = cv2.copyMakeBorder(upscaled, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=255)
+    bordered = cv2.copyMakeBorder(thresh, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=255)
 
     if DEBUG_OCR:
         cv2.imwrite(os.path.join(DEBUG_DIR, f"{sensor_name}_processed.png"), bordered)
@@ -75,7 +100,9 @@ def ocr(img, page_segmentation_mode, whitelist=None, *, oem=3, lang="deu"):
 
 
 def crop_and_ocr(cv_img, sensor_config: SensorConfig):
-    processed_img = preprocess_image_for_ocr(cv_img, sensor_config.rect, sensor_config.name)
+    processed_img = preprocess_image_for_ocr(
+        cv_img, sensor_config.rect, sensor_config.name, sensor_config.parser_type
+    )
     raw_text = ocr(
         processed_img,
         sensor_config.page_segmentation_mode,
@@ -96,6 +123,43 @@ def crop_and_ocr(cv_img, sensor_config: SensorConfig):
         _capture_anomaly(cv_img, crop, sensor_config.name, raw_text)
 
     return result
+
+
+def is_dialog_open(img, rect=(380, 200, 60, 60)):
+    """Checks the boiler firebox graphic on the "main" page -- a fixed patch
+    of the display that is always richly colored (red/orange fire artwork) in
+    every normal state. A "Meldungen" (warnings) popup renders as a plain
+    white dialog body on top of the page and covers this exact area, so a
+    near-white/desaturated reading here means the popup is open and every
+    sensor crop underneath it would read blank. Only meaningful on the "main"
+    page layout (the "boiler"/"setpoint" page has different artwork here)."""
+    x, y, w, h = rect
+
+    if img is None:
+        return False
+
+    crop = img[y : y + h, x : x + w]
+    hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    avg_saturation = np.mean(hsv_crop[:, :, 1])
+    avg_value = np.mean(hsv_crop[:, :, 2])
+
+    if DEBUG_OCR:
+        cv2.imwrite(os.path.join(DEBUG_DIR, "_dialog_check.png"), crop)
+        logger.info(
+            f"Dialog Check: Avg Saturation={avg_saturation:.2f}, Avg Value={avg_value:.2f}"
+        )
+
+    return avg_saturation < 10 and avg_value > 240
+
+
+def is_screen_blanked(img, threshold=15):
+    """Checks whole-frame brightness. The HMI's touchscreen falls back to a
+    near-black idle screensaver after inactivity, which would otherwise slip
+    past is_dialog_open() (black has near-zero saturation too, but so does a
+    lit page's grey chrome) and produce a page-wide burst of blank reads."""
+    if img is None:
+        return False
+    return float(np.mean(img)) < threshold
 
 
 def is_area_grey(img, rect=(580, 0, 20, 35)):

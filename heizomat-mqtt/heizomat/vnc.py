@@ -6,7 +6,7 @@ import time
 
 import cv2
 
-from .ocr import DEBUG_DIR, DEBUG_OCR, crop_and_ocr, is_area_grey
+from .ocr import DEBUG_DIR, DEBUG_OCR, crop_and_ocr, is_area_grey, is_dialog_open, is_screen_blanked
 from .sensors import sollwerte_indicator, uhrzeit_sensor
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,9 @@ VNC_PW = os.environ.get("VNC_PASSWORD", "")
 
 SETTLE_RETRIES = 2
 SETTLE_SLEEP = 0.4
+
+# Close ("X") button of the "Meldungen" warnings popup, on the main page only.
+DIALOG_CLOSE_BUTTON = (721, 75)
 
 
 def vnc_cmd(actions: list):
@@ -108,6 +111,12 @@ def capture_current_page(filename):
     if img is None:
         return None
 
+    if is_screen_blanked(img):
+        logger.warning("HMI screen appears blank (idle screensaver?); skipping cycle")
+        if DEBUG_OCR:
+            shutil.copy(filename, os.path.join(DEBUG_DIR, "_blanked.png"))
+        return {}
+
     if not is_area_grey(img):
         logger.info("HMI State: Red/Green detected. Skipping cycle.")
         if DEBUG_OCR:
@@ -121,6 +130,28 @@ def capture_current_page(filename):
         result_dict["setpoint"] = capture_hold_sollwerte()
     else:
         new_name = "main"
+
+        # A "Meldungen" (warnings) popup can be sitting open over the main
+        # page, covering most sensor fields with a plain white dialog body
+        # and producing a burst of blank/garbage reads across every sensor
+        # underneath it. is_dialog_open() only applies to this page layout
+        # (the boiler/setpoint page's artwork differs), so it's checked here.
+        if is_dialog_open(img):
+            logger.warning("Meldungen dialog appears open on HMI; attempting to dismiss")
+            x, y = DIALOG_CLOSE_BUTTON
+            if not vnc_cmd(["mousemove", str(x), str(y), "click", "1"]):
+                logger.error("Failed to click dialog close button")
+                return None
+            time.sleep(0.5)
+            img = capture(filename)
+            if img is None:
+                return None
+            if is_dialog_open(img):
+                logger.warning("Dialog still open after dismiss attempt; skipping cycle")
+                if DEBUG_OCR:
+                    shutil.copy(filename, os.path.join(DEBUG_DIR, "_dialog_blocked.png"))
+                return {}
+
         img = capture_settled(filename, img)
         if img is None:
             return None

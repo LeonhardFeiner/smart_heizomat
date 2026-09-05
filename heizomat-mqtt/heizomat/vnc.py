@@ -20,6 +20,16 @@ SETTLE_SLEEP = 0.4
 # Close ("X") button of the "Meldungen" warnings popup, on the main page only.
 DIALOG_CLOSE_BUTTON = (721, 75)
 
+# The HMI blanks to a near-black screensaver after a few idle minutes, and the
+# poll interval (600s) is far longer than that timeout, so almost every cycle
+# used to land on a blank screen and get skipped. On a wake tap we aim for the
+# empty gap in the top status bar (between the "Kunde" label and the clock, no
+# control underneath) -- a Siemens Comfort panel consumes the first touch purely
+# to dismiss the screensaver and does not forward it, but targeting dead space
+# keeps it a no-op even if some firmware revision does forward it.
+WAKE_TAP = (230, 14)
+WAKE_SETTLE = 1.0
+
 
 def vnc_cmd(actions: list):
     addr = VNC_ADDRESS if ":" in VNC_ADDRESS else f"{VNC_ADDRESS}:0"
@@ -98,6 +108,17 @@ def check_sollwerte_page(img):
     return check_val and "soll" in str(check_val).lower()
 
 
+def wake_screen():
+    """Dismiss the HMI's idle screensaver with a tap on dead screen space, then
+    wait for the page to redraw. Returns False if the VNC command itself failed."""
+    x, y = WAKE_TAP
+    if not vnc_cmd(["mousemove", str(x), str(y), "click", "1"]):
+        logger.error("Failed to send wake tap to HMI")
+        return False
+    time.sleep(WAKE_SETTLE)
+    return True
+
+
 def toggle_page():
     if not vnc_cmd(["mousemove", "649", "455", "click", "1"]):
         logger.error("Failed to switch page via VNC")
@@ -112,10 +133,17 @@ def capture_current_page(filename):
         return None
 
     if is_screen_blanked(img):
-        logger.warning("HMI screen appears blank (idle screensaver?); skipping cycle")
-        if DEBUG_OCR:
-            shutil.copy(filename, os.path.join(DEBUG_DIR, "_blanked.png"))
-        return {}
+        logger.info("HMI screen blank (idle screensaver); sending wake tap")
+        if not wake_screen():
+            return {}
+        img = capture(filename)
+        if img is None:
+            return None
+        if is_screen_blanked(img):
+            logger.warning("HMI screen still blank after wake tap; skipping cycle")
+            if DEBUG_OCR:
+                shutil.copy(filename, os.path.join(DEBUG_DIR, "_blanked.png"))
+            return {}
 
     if not is_area_grey(img):
         logger.info("HMI State: Red/Green detected. Skipping cycle.")

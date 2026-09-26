@@ -48,7 +48,10 @@ logger.info(f"Heizomat MQTT - VNC DIRECT Edition")
 logger.info(f"MQTT={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
 logger.info(f"VNC={VNC_ADDRESS}")
 
-_discovery_sent = False
+# HA announces itself here on every start; retained discovery configs can get
+# lost (broker restart without persistence, manual retraction), so re-announce
+# whenever HA comes online instead of relying on the broker to keep them.
+HA_STATUS_TOPIC = f"{HA_DISCOVERY_PREFIX}/status"
 
 
 # ----------------------------------------------------------------------
@@ -62,15 +65,21 @@ def _slugify(name: str) -> str:
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    global _discovery_sent
     if reason_code == 0:
         logger.info("MQTT Connected")
-        if not _discovery_sent:
-            send_ha_discovery(client)
-            _discovery_sent = True
+        # Every (re)connect, not just the first: a broker restart can drop the
+        # retained configs, and HA only (re)creates entities from them.
+        send_ha_discovery(client)
         client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
+        client.subscribe(HA_STATUS_TOPIC, qos=1)
     else:
         logger.error(f"MQTT Connection failed: {reason_code}")
+
+
+def on_message(client, userdata, msg):
+    if msg.topic == HA_STATUS_TOPIC and msg.payload == b"online":
+        send_ha_discovery(client)
+        client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
 
 
 def on_disconnect(client, userdata, flags, reason_code, properties=None):
@@ -123,6 +132,7 @@ def main():
     )
     mqtt_client.on_connect = on_connect
     mqtt_client.on_disconnect = on_disconnect
+    mqtt_client.on_message = on_message
     if MQTT_USERNAME:
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     mqtt_client.will_set(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)

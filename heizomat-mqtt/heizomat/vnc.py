@@ -28,7 +28,7 @@ DIALOG_CLOSE_BUTTON = (721, 75)
 # to dismiss the screensaver and does not forward it, but targeting dead space
 # keeps it a no-op even if some firmware revision does forward it.
 WAKE_TAP = (230, 14)
-WAKE_SETTLE = 1.0
+WAKE_SETTLE = 5.0
 
 
 def vnc_cmd(actions: list):

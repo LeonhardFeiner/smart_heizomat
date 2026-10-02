@@ -10,13 +10,14 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from itertools import chain
 
 import paho.mqtt.client as mqtt
 
 from heizomat.sensors import ENUM_FALLBACK, boiler_sensors, main_sensors, sensor_dict, setpoint_sensors
-from heizomat.vnc import capture_hmi
+from heizomat.vnc import capture_hmi, switch_off_from_rgg
 from heizomat.ocr import crop_and_ocr, last_raw_text
 
 # ----------------------------------------------------------------------
@@ -53,6 +54,12 @@ logger.info(f"VNC={VNC_ADDRESS}")
 # whenever HA comes online instead of relying on the broker to keep them.
 HA_STATUS_TOPIC = f"{HA_DISCOVERY_PREFIX}/status"
 
+# HA owns the timing ("RGG for > 1 h"); the bridge only executes the click and
+# reports back. Commands are non-retained and retained ones are ignored, so a
+# broker/bridge restart can never replay an old "switch off".
+CMD_OFF_TOPIC = f"{MQTT_TOPIC}/cmd/off_from_rgg"
+CMD_RESULT_TOPIC = f"{MQTT_TOPIC}/cmd/result"
+
 
 # ----------------------------------------------------------------------
 # MQTT & DISCOVERY
@@ -72,11 +79,33 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         send_ha_discovery(client)
         client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
         client.subscribe(HA_STATUS_TOPIC, qos=1)
+        client.subscribe(CMD_OFF_TOPIC, qos=1)
     else:
         logger.error(f"MQTT Connection failed: {reason_code}")
 
 
+def _run_off_command(client):
+    try:
+        ok, message = switch_off_from_rgg()
+    except Exception as e:
+        logger.exception("switch_off_from_rgg crashed")
+        ok, message = False, f"Fehler: {e}"
+    logger.info(f"Off command: ok={ok} {message}")
+    client.publish(
+        CMD_RESULT_TOPIC,
+        json.dumps({"command": "off_from_rgg", "ok": ok, "message": message,
+                    "timestamp": datetime.datetime.now().isoformat()}),
+        qos=1,
+    )
+
+
 def on_message(client, userdata, msg):
+    if msg.topic == CMD_OFF_TOPIC:
+        if msg.retain:
+            return
+        # Own thread: this callback must not block on the VNC lock while a poll runs.
+        threading.Thread(target=_run_off_command, args=(client,), daemon=True).start()
+        return
     if msg.topic == HA_STATUS_TOPIC and msg.payload == b"online":
         send_ha_discovery(client)
         client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)

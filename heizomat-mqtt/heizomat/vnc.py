@@ -2,12 +2,13 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 import cv2
 
 from .ocr import DEBUG_DIR, DEBUG_OCR, crop_and_ocr, is_area_grey, is_dialog_open, is_screen_blanked
-from .sensors import sollwerte_indicator, uhrzeit_sensor
+from .sensors import main_sensors, sollwerte_indicator, uhrzeit_sensor
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,21 @@ DIALOG_CLOSE_BUTTON = (721, 75)
 # keeps it a no-op even if some firmware revision does forward it.
 WAKE_TAP = (230, 14)
 WAKE_SETTLE = 5.0
+
+# Red off button, bottom-left of the main page. It only exists while the boiler
+# is running or in "Wartung mit RGG"; once pressed in RGG the HMI drops to plain
+# "Wartung" (confirmed live 2026-10-02). The green start button next to it needs a
+# 3 s hold, so a stray click here can never start the boiler.
+OFF_BUTTON = (50, 455)
+OFF_SETTLE = 3.0
+RGG_STATE = "Wartung mit RGG"
+OFF_STATE = "Wartung"
+
+# Serialises every VNC session: the poll cycle flips between pages, so an
+# off-button click landing mid-cycle could hit the wrong page layout.
+HMI_LOCK = threading.Lock()
+
+_sensors_by_name = {s.name: s for s in main_sensors}
 
 
 def vnc_cmd(actions: list):
@@ -192,7 +208,44 @@ def capture_current_page(filename):
     return result_dict
 
 
+def _read_modes(img):
+    return {n: crop_and_ocr(img, _sensors_by_name[n]) for n in ("Betriebsart", "Betriebszustand")}
+
+
+def switch_off_from_rgg():
+    """Presses the HMI off button to finish the warm-weather shutdown
+    (Wartung mit RGG -> Wartung). Re-reads the state from a fresh screenshot
+    right before clicking, since the command can arrive minutes after the
+    decision was made (and OCR is only polled every 10 min). Returns (ok, message)."""
+    with HMI_LOCK:
+        pages = capture_current_page("off_check.png")
+        if not pages or "main" not in pages:
+            return False, "HMI nicht auf der Hauptseite lesbar (Bildschirm/Dialog), nichts geklickt"
+
+        modes = _read_modes(pages["main"])
+        if RGG_STATE not in modes.values():
+            return False, f"Zustand ist nicht '{RGG_STATE}' ({modes}), nichts geklickt"
+
+        x, y = OFF_BUTTON
+        if not vnc_cmd(["mousemove", str(x), str(y), "click", "1"]):
+            return False, "VNC-Klick auf Aus-Taste fehlgeschlagen"
+        time.sleep(OFF_SETTLE)
+
+        img = capture("off_verify.png")
+        if img is None:
+            return False, "Aus-Taste geklickt, Kontrollbild fehlgeschlagen"
+        after = _read_modes(img)
+        if after["Betriebsart"] == OFF_STATE:
+            return True, f"'{RGG_STATE}' -> '{OFF_STATE}'"
+        return False, f"Aus-Taste geklickt, aber Zustand nicht bestätigt ({after})"
+
+
 def capture_hmi():
+    with HMI_LOCK:
+        return _capture_hmi_locked()
+
+
+def _capture_hmi_locked():
     result_dict = capture_current_page("screenshot1.png")
     if result_dict is None:
         return None

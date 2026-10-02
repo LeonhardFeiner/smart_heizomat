@@ -8,7 +8,7 @@ import time
 import cv2
 
 from .ocr import DEBUG_DIR, DEBUG_OCR, crop_and_ocr, is_area_grey, is_dialog_open, is_screen_blanked
-from .sensors import main_sensors, sollwerte_indicator, uhrzeit_sensor
+from .sensors import ENUM_FALLBACK, main_sensors, sollwerte_indicator, uhrzeit_sensor
 
 logger = logging.getLogger(__name__)
 
@@ -212,19 +212,32 @@ def _read_modes(img):
     return {n: crop_and_ocr(img, _sensors_by_name[n]) for n in ("Betriebsart", "Betriebszustand")}
 
 
-def switch_off_from_rgg():
-    """Presses the HMI off button to finish the warm-weather shutdown
-    (Wartung mit RGG -> Wartung). Re-reads the state from a fresh screenshot
-    right before clicking, since the command can arrive minutes after the
-    decision was made (and OCR is only polled every 10 min). Returns (ok, message)."""
-    with HMI_LOCK:
-        pages = capture_current_page("off_check.png")
-        if not pages or "main" not in pages:
-            return False, "HMI nicht auf der Hauptseite lesbar (Bildschirm/Dialog), nichts geklickt"
+def _off_button_visible(img):
+    """The off button is solid red; it's absent in plain 'Wartung'."""
+    b, g, r = cv2.mean(img[432:480, 0:98])[:3]
+    return r > 180 and g < 90 and b < 90
 
-        modes = _read_modes(pages["main"])
-        if RGG_STATE not in modes.values():
-            return False, f"Zustand ist nicht '{RGG_STATE}' ({modes}), nichts geklickt"
+
+def _press_off_button(allowed_from, expected_after):
+    """Shared guarded click. Re-reads the state from a fresh screenshot right
+    before clicking, since the command can arrive minutes after the decision
+    was made (and OCR is only polled every 10 min). Returns (ok, message)."""
+    with HMI_LOCK:
+        img = capture("off_check.png")
+        if img is not None and is_screen_blanked(img):
+            if not wake_screen():
+                return False, "Aufwecken des HMI fehlgeschlagen, nichts geklickt"
+            img = capture("off_check.png")
+        if img is None:
+            return False, "HMI-Bild nicht lesbar, nichts geklickt"
+        if is_dialog_open(img) or check_sollwerte_page(img):
+            return False, "HMI nicht auf der Hauptseite (Dialog/Sollwerte), nichts geklickt"
+
+        modes = _read_modes(img)
+        if not allowed_from(modes):
+            return False, f"Zustand passt nicht ({modes}), nichts geklickt"
+        if not _off_button_visible(img):
+            return False, "Rote Aus-Taste nicht sichtbar, nichts geklickt"
 
         x, y = OFF_BUTTON
         if not vnc_cmd(["mousemove", str(x), str(y), "click", "1"]):
@@ -235,9 +248,24 @@ def switch_off_from_rgg():
         if img is None:
             return False, "Aus-Taste geklickt, Kontrollbild fehlgeschlagen"
         after = _read_modes(img)
-        if after["Betriebsart"] == OFF_STATE:
-            return True, f"'{RGG_STATE}' -> '{OFF_STATE}'"
+        if after["Betriebsart"] in expected_after:
+            return True, f"{modes['Betriebsart']} -> {after['Betriebsart']}"
         return False, f"Aus-Taste geklickt, aber Zustand nicht bestätigt ({after})"
+
+
+def switch_off_from_rgg():
+    """Finish the warm-weather shutdown: Wartung mit RGG -> Wartung."""
+    return _press_off_button(lambda m: RGG_STATE in m.values(), (OFF_STATE,))
+
+
+def shutdown_running():
+    """Manual first press while the boiler is running: -> Wartung mit RGG
+    (burn-down + grate clean). Refuses unless Betriebsart is a known state
+    other than Wartung (RGG included: pressing again is the second step)."""
+    return _press_off_button(
+        lambda m: m["Betriebsart"] not in (OFF_STATE, ENUM_FALLBACK) and m["Betriebsart"] != RGG_STATE,
+        (RGG_STATE, OFF_STATE),
+    )
 
 
 def capture_hmi():

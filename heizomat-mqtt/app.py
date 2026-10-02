@@ -17,7 +17,7 @@ from itertools import chain
 import paho.mqtt.client as mqtt
 
 from heizomat.sensors import ENUM_FALLBACK, boiler_sensors, main_sensors, sensor_dict, setpoint_sensors
-from heizomat.vnc import capture_hmi, switch_off_from_rgg
+from heizomat.vnc import capture_hmi, shutdown_running, switch_off_from_rgg
 from heizomat.ocr import crop_and_ocr, last_raw_text
 
 # ----------------------------------------------------------------------
@@ -58,6 +58,7 @@ HA_STATUS_TOPIC = f"{HA_DISCOVERY_PREFIX}/status"
 # reports back. Commands are non-retained and retained ones are ignored, so a
 # broker/bridge restart can never replay an old "switch off".
 CMD_OFF_TOPIC = f"{MQTT_TOPIC}/cmd/off_from_rgg"
+CMD_SHUTDOWN_TOPIC = f"{MQTT_TOPIC}/cmd/shutdown"
 CMD_RESULT_TOPIC = f"{MQTT_TOPIC}/cmd/result"
 
 
@@ -80,31 +81,37 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, qos=1, retain=True)
         client.subscribe(HA_STATUS_TOPIC, qos=1)
         client.subscribe(CMD_OFF_TOPIC, qos=1)
+        client.subscribe(CMD_SHUTDOWN_TOPIC, qos=1)
     else:
         logger.error(f"MQTT Connection failed: {reason_code}")
 
 
-def _run_off_command(client):
+def _run_off_command(client, name, action):
     try:
-        ok, message = switch_off_from_rgg()
+        ok, message = action()
     except Exception as e:
-        logger.exception("switch_off_from_rgg crashed")
+        logger.exception(f"{name} crashed")
         ok, message = False, f"Fehler: {e}"
-    logger.info(f"Off command: ok={ok} {message}")
+    logger.info(f"Command {name}: ok={ok} {message}")
     client.publish(
         CMD_RESULT_TOPIC,
-        json.dumps({"command": "off_from_rgg", "ok": ok, "message": message,
+        json.dumps({"command": name, "ok": ok, "message": message,
                     "timestamp": datetime.datetime.now().isoformat()}),
         qos=1,
     )
 
 
 def on_message(client, userdata, msg):
-    if msg.topic == CMD_OFF_TOPIC:
+    actions = {
+        CMD_OFF_TOPIC: ("off_from_rgg", switch_off_from_rgg),
+        CMD_SHUTDOWN_TOPIC: ("shutdown", shutdown_running),
+    }
+    if msg.topic in actions:
         if msg.retain:
             return
+        name, action = actions[msg.topic]
         # Own thread: this callback must not block on the VNC lock while a poll runs.
-        threading.Thread(target=_run_off_command, args=(client,), daemon=True).start()
+        threading.Thread(target=_run_off_command, args=(client, name, action), daemon=True).start()
         return
     if msg.topic == HA_STATUS_TOPIC and msg.payload == b"online":
         send_ha_discovery(client)
@@ -150,6 +157,25 @@ def send_ha_discovery(client):
             config["options"] = list(sensor.enum_options) + [ENUM_FALLBACK]
 
         client.publish(topic, json.dumps(config), qos=1, retain=True)
+
+    # Manual "press the red button" from HA: running -> Wartung mit RGG.
+    client.publish(
+        f"{HA_DISCOVERY_PREFIX}/button/{prefix}/ausschalten/config",
+        json.dumps({
+            "name": "Ausschalten (RGG)",
+            "default_entity_id": f"button.{prefix}_ausschalten",
+            "unique_id": f"{prefix}_ausschalten",
+            "command_topic": CMD_SHUTDOWN_TOPIC,
+            "payload_press": "press",
+            "availability_topic": AVAILABILITY_TOPIC,
+            "payload_available": PAYLOAD_AVAILABLE,
+            "payload_not_available": PAYLOAD_NOT_AVAILABLE,
+            "device": {"identifiers": [prefix], "name": prefix},
+            "icon": "mdi:power",
+        }),
+        qos=1,
+        retain=True,
+    )
 
 
 # ----------------------------------------------------------------------

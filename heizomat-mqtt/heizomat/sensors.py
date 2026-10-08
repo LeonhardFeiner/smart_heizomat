@@ -66,6 +66,10 @@ BETRIEBSZUSTAND_OPTIONS = (
     "Zündbetrieb",
     "Boilerbetrieb",
     "Gebläsenachlauf",
+    # Seen live 2026-10-07/08: cyclic state during Dauerbetrieb, displayed as
+    # "EF Saugzugvorlauf" (OCR often drops the space). Missing from this list
+    # it read as "Unbekannt" every other poll.
+    "EF Saugzugvorlauf",
 )
 BRENNSTOFF_OPTIONS = tuple(
     v.strip()
@@ -79,13 +83,15 @@ def match_enum(raw_text, options, threshold=ENUM_MATCH_THRESHOLD, fallback=ENUM_
     ratio, tolerant of OCR noise). Returns (value, is_exact) — is_exact is
     False whenever the raw text wasn't a clean 1:1 match, whether or not a
     fuzzy match was accepted, so the caller can flag it for review."""
-    text = (raw_text or "").strip().lower()
+    # Spaces are ignored for matching: OCR drops/adds them inconsistently
+    # ("EFSaugzugvorlauf" vs "EF Saugzugvorlauf") and they carry no meaning here.
+    text = "".join((raw_text or "").split()).lower()
     if not text or not options:
         return fallback, False
 
     best_option, best_score = None, 0.0
     for option in options:
-        score = difflib.SequenceMatcher(None, text, option.lower()).ratio()
+        score = difflib.SequenceMatcher(None, text, "".join(option.split()).lower()).ratio()
         if score > best_score:
             best_option, best_score = option, score
 

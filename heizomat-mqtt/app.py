@@ -192,11 +192,11 @@ def main():
         mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     mqtt_client.will_set(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)
 
-    try:
-        mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
-        mqtt_client.loop_start()
-    except Exception as e:
-        logger.error(f"Could not connect to MQTT: {e}")
+    # connect_async + loop_start: the network thread keeps retrying even if the
+    # broker (or its DNS name) isn't up yet at container start.
+    mqtt_client.reconnect_delay_set(min_delay=1, max_delay=30)
+    mqtt_client.connect_async(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+    mqtt_client.loop_start()
 
     consecutive_failures = 0
 
